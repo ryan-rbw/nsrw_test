@@ -1,0 +1,37 @@
+# NSS Host Configuration Example
+# Copy to ~/.config/nss_host/config.toml and customize
+
+[serial]
+# Serial port device path
+port = "/dev/ttyAMA0"
+
+# Baud rate (455.6-465.7 kbps tolerated)
+baud = 460800
+
+# Reply timeout in milliseconds
+timeout_ms = 10
+
+# Retry count on CRC/SLIP errors
+retries = 2
+
+# GPIO pins (BCM numbering) for RS-485 control
+# Set to null if using USB-to-RS485 adapter
+port_select_gpio = 24  # 0=A, 1=B
+de_gpio = 18           # Driver Enable (active-high)
+nre_gpio = 23          # Receiver Enable (active-low)
+fault_in_gpio = 25     # FAULT input from emulator
+reset_out_gpio = 12    # RESET output to emulator
+
+[logging]
+# Log level: DEBUG, INFO, WARNING, ERROR
+level = "INFO"
+
+# Enable frame-level logging (verbose)
+frame_dump = true
+
+# Directory for log files
+log_dir = "~/nss_logs"
+
+[defaults_bundle]
+# Path to versioned defaults bundle for non-default tracking
+path = "~/nss_bundles/nrwa_t6_defaults_v1.toml"

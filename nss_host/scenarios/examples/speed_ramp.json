@@ -1,0 +1,33 @@
+{
+  "name": "speed_ramp",
+  "version": "1.0",
+  "description": "Ramp speed from 0 to 1000 RPM and back",
+  "steps": [
+    {
+      "action": "set_mode",
+      "mode": "SPEED",
+      "duration_s": 0.1
+    },
+    {
+      "action": "ramp_speed",
+      "start_rpm": 0,
+      "end_rpm": 1000,
+      "duration_s": 5.0
+    },
+    {
+      "action": "hold",
+      "duration_s": 2.0
+    },
+    {
+      "action": "ramp_speed",
+      "start_rpm": 1000,
+      "end_rpm": 0,
+      "duration_s": 5.0
+    },
+    {
+      "action": "set_mode",
+      "mode": "OFF",
+      "duration_s": 0.1
+    }
+  ]
+}
