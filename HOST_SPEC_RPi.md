@@ -232,15 +232,54 @@ Describe the complete bench wiring between Raspberry Pi, RS 485 transceivers, an
 
 - Define a harness mapping table:
 
-| Signal name        | Raspberry Pi GPIO or port | Transceiver pin or pair | Emulator signal (Pico) |
-|--------------------|---------------------------|--------------------------|-------------------------|
-| UART TX host       | GPIO14 / ttyAMA0 TX       | DI                       | UART1_RX                |
-| UART RX host       | GPIO15 / ttyAMA0 RX       | RO                       | UART1_TX                |
-| RS 485 DE host     | GPIO18                    | DE                       | RS485_DE                |
-| RS 485 RE host     | GPIO23                    | RE                       | RS485_RE                |
-| PORT SELECT A or B | GPIO24                    | Relay or mux control     | Port A or Port B bus    |
-| FAULT IN           | GPIO25                    | Opto or level shifter    | FAULT_OUT from emulator |
-| RESET OUT          | GPIO12                    | Open drain driver        | RESET_IN on emulator    |
+### Raspberry Pi Pico W Emulator Pin Configuration
+
+**RS-485 Communication (UART1):**
+| Pin  | Function    | Direction | Description                        |
+|------|-------------|-----------|-------------------------------------|
+| GP4  | UART1_TX    | Output    | RS-485 transmit data                |
+| GP5  | UART1_RX    | Input     | RS-485 receive data                 |
+| GP6  | RS485_DE    | Output    | Driver Enable (high = TX mode)      |
+| GP7  | RS485_RE    | Output    | Receiver Enable (low = RX mode)     |
+
+Configuration: 460.8 kbps, 8-N-1, no flow control
+
+**Device Address Selection:**
+| Pin  | Function | Direction              | Description           |
+|------|----------|------------------------|-----------------------|
+| GP10 | ADDR0    | Input (pull-up/down)   | Address bit 0 (LSB)   |
+| GP11 | ADDR1    | Input (pull-up/down)   | Address bit 1         |
+| GP12 | ADDR2    | Input (pull-up/down)   | Address bit 2 (MSB)   |
+
+Address Range: 0-7 (3-bit binary selection)
+
+**Status and Control:**
+| Pin  | Function | Direction         | Description                           |
+|------|----------|-------------------|---------------------------------------|
+| GP13 | FAULT    | Output (open-drain)| Fault indicator (active low)          |
+| GP14 | RESET    | Input             | Hardware reset (active low)           |
+| GP25 | LED      | Output            | Onboard LED (heartbeat @ 1 Hz)        |
+
+**Optional External LEDs (disabled by default):**
+| Pin  | Function       | Description                          |
+|------|----------------|--------------------------------------|
+| GP15 | RS485_ACTIVE   | RS-485 activity indicator (optional) |
+| GP16 | FAULT_LED      | External fault LED (optional)        |
+| GP17 | MODE_LED       | Control mode indicator (optional)    |
+
+**Summary:** 8 active pins (TX, RX, DE, RE, ADDR0-2, FAULT, RESET) + 1 heartbeat LED
+
+### Complete Harness Mapping Table
+
+| Signal Name        | Raspberry Pi 5 GPIO   | RS-485 Transceiver | Pico W Emulator Pin | Notes                        |
+|--------------------|-----------------------|--------------------|---------------------|------------------------------|
+| UART TX (host)     | GPIO14 (ttyAMA0 TX)   | DI                 | GP5 (UART1_RX)      | Pi transmits → Pico receives |
+| UART RX (host)     | GPIO15 (ttyAMA0 RX)   | RO                 | GP4 (UART1_TX)      | Pico transmits → Pi receives |
+| RS-485 DE (host)   | GPIO18                | DE                 | GP6 (RS485_DE)      | Driver Enable (active-high)  |
+| RS-485 nRE (host)  | GPIO23                | RE̅                 | GP7 (RS485_RE)      | Receiver Enable (active-low) |
+| PORT SELECT A/B    | GPIO24                | Relay/mux control  | (Port switching)    | Optional redundancy          |
+| FAULT IN           | GPIO25                | Direct/opto        | GP13 (FAULT)        | Emulator → Host (active-low) |
+| RESET OUT          | GPIO12                | Direct/open-drain  | GP14 (RESET)        | Host → Emulator (active-low) |
 
 - Specify power rails and grounding:
   - RS 485 transceivers are powered from the Pi 3v3 or 5v rail as required by part choice.
