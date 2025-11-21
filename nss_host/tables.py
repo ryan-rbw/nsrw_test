@@ -7,7 +7,6 @@ Maps emulator tables to host views and field definitions.
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List
 
 from nss_host.icd_fields import FieldDef, FieldType
 
@@ -41,7 +40,7 @@ class TableDef:
     id: TableID
     name: str
     description: str
-    fields: List[FieldDef]
+    fields: list[FieldDef]
     base_addr: int
     size_bytes: int
 
@@ -75,9 +74,7 @@ SETPOINTS_TABLE = TableDef(
         FieldDef(
             "speed_rpm_sp", FieldType.Q15_16, 0, "RPM", 1.0, -5000.0, 5000.0, "Speed setpoint"
         ),
-        FieldDef(
-            "current_a_sp", FieldType.Q15_16, 4, "A", 1.0, -5.0, 5.0, "Current setpoint"
-        ),
+        FieldDef("current_a_sp", FieldType.Q15_16, 4, "A", 1.0, -5.0, 5.0, "Current setpoint"),
         FieldDef("torque_nm_sp", FieldType.Q15_16, 8, "Nm", 1.0, -1.0, 1.0, "Torque setpoint"),
     ],
 )
@@ -89,9 +86,7 @@ LIMITS_TABLE = TableDef(
     base_addr=0x1040,
     size_bytes=16,
     fields=[
-        FieldDef(
-            "max_speed_rpm", FieldType.UQ16_16, 0, "RPM", 1.0, 0.0, 6000.0, "Maximum speed"
-        ),
+        FieldDef("max_speed_rpm", FieldType.UQ16_16, 0, "RPM", 1.0, 0.0, 6000.0, "Maximum speed"),
         FieldDef("max_current_a", FieldType.UQ16_16, 4, "A", 1.0, 0.0, 10.0, "Maximum current"),
         FieldDef("max_power_w", FieldType.UQ16_16, 8, "W", 1.0, 0.0, 200.0, "Maximum power"),
     ],
@@ -137,9 +132,7 @@ FAULTS_TABLE = TableDef(
     base_addr=0x1080,
     size_bytes=8,
     fields=[
-        FieldDef(
-            "fault_live", FieldType.UINT32, 0, "", 1.0, 0.0, 0xFFFFFFFF, "Live fault bits"
-        ),
+        FieldDef("fault_live", FieldType.UINT32, 0, "", 1.0, 0.0, 0xFFFFFFFF, "Live fault bits"),
         FieldDef(
             "fault_latched", FieldType.UINT32, 4, "", 1.0, 0.0, 0xFFFFFFFF, "Latched fault bits"
         ),
@@ -148,7 +141,7 @@ FAULTS_TABLE = TableDef(
 
 
 # Table registry
-TABLES: Dict[TableID, TableDef] = {
+TABLES: dict[TableID, TableDef] = {
     TableID.DYNAMICS: DYNAMICS_TABLE,
     TableID.SETPOINTS: SETPOINTS_TABLE,
     TableID.LIMITS: LIMITS_TABLE,

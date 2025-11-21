@@ -7,7 +7,6 @@ Provides Session class for managing NSP communication with the emulator.
 
 import logging
 import time
-from typing import Optional, Union
 
 from nss_host import crc_ccitt, nsp, slip
 from nss_host.serial_link import SerialLink
@@ -65,7 +64,7 @@ class Session:
         cls,
         port: str,
         baud: int = 460800,
-        rs485: Optional[dict] = None,
+        rs485: dict | None = None,
         timeout_ms: int = 10,
         retries: int = 2,
     ) -> "Session":
@@ -113,7 +112,7 @@ class Session:
 
         logger.debug(f"TX: {nsp_bytes.hex()} (CRC: {with_crc[-2:].hex()})")
 
-    def _receive_frame(self, timeout_s: float) -> Optional[nsp.NspFrame]:
+    def _receive_frame(self, timeout_s: float) -> nsp.NspFrame | None:
         """
         Receive NSP frame with SLIP decoding and CRC verification.
 
@@ -226,21 +225,29 @@ class Session:
         Read memory/registers (PEEK command).
 
         Args:
-            addr: Start address.
-            length: Number of bytes to read.
+            addr: Start address (16-bit, must be 4-byte aligned).
+            length: Number of bytes to read (8-bit count).
 
         Returns:
             Read data.
 
         Raises:
             nsp.NspError: On communication error.
+
+        Note:
+            Format per emulator: [Addr_H, Addr_L, Count]
+            - Address is 16-bit big-endian
+            - Count is 8-bit
+            - Address must be 4-byte aligned
+            - Count must be > 0
+            - Address must be <= 0x0500
         """
-        # Build PEEK payload: addr (4 bytes) + length (2 bytes)
-        payload = addr.to_bytes(4, "little") + length.to_bytes(2, "little")
+        # Build PEEK payload: addr (2 bytes big-endian) + count (1 byte)
+        payload = addr.to_bytes(2, "big") + bytes([length])
         request = nsp.make_request(nsp.NspCommand.PEEK, payload)
 
         reply = self._transact(request)
-        logger.info(f"PEEK addr=0x{addr:08X} len={length}")
+        logger.info(f"PEEK addr=0x{addr:04X} len={length}")
 
         return reply.payload
 
@@ -249,49 +256,77 @@ class Session:
         Write memory/registers (POKE command).
 
         Args:
-            addr: Start address.
-            data: Data to write.
+            addr: Start address (16-bit, must be 4-byte aligned).
+            data: Data to write (must be multiple of 4 bytes).
 
         Raises:
             nsp.NspError: On communication error.
+            ValueError: If data length is not a multiple of 4 bytes.
+
+        Note:
+            Format per emulator: [Addr_H, Addr_L, Count, Data...]
+            - Address is 16-bit big-endian
+            - Count is number of 4-byte registers (not number of bytes)
+            - Data must be a multiple of 4 bytes
+            - Cannot write to read-only regions (0x0000-0x00FF, 0x0300-0x03FF)
         """
-        # Build POKE payload: addr (4 bytes) + data
-        payload = addr.to_bytes(4, "little") + data
+        # Validate data length is multiple of 4 bytes (register size)
+        if len(data) % 4 != 0:
+            raise ValueError(f"Data length must be multiple of 4 bytes, got {len(data)}")
+
+        # Count = number of registers (4-byte units)
+        num_registers = len(data) // 4
+
+        # Build POKE payload: addr (2 bytes big-endian) + count (1 byte) + data
+        payload = addr.to_bytes(2, "big") + bytes([num_registers]) + data
         request = nsp.make_request(nsp.NspCommand.POKE, payload)
 
         self._transact(request)
-        logger.info(f"POKE addr=0x{addr:08X} len={len(data)}")
+        logger.info(f"POKE addr=0x{addr:04X} count={num_registers} ({len(data)} bytes)")
 
-    def app_telemetry(self, block: Union[str, TelemetryBlock]) -> Union[StandardTelemetry]:
+    def app_telemetry(self, block: str | TelemetryBlock | int) -> StandardTelemetry | bytes:
         """
         Request telemetry block (APP-TM command).
 
         Args:
-            block: Telemetry block name or ID.
+            block: Telemetry block name, enum, or ID (0x00-0x04 supported).
 
         Returns:
-            Decoded telemetry object.
+            Decoded telemetry object for STANDARD, or raw bytes for others.
 
         Raises:
             nsp.NspError: On communication error.
+
+        Note:
+            Supported blocks: 0x00=STANDARD, 0x01=TEMPERATURES,
+            0x02=VOLTAGES, 0x03=CURRENTS, 0x04=DIAGNOSTICS
         """
-        # Convert block name to ID
+        # Convert block to ID
         if isinstance(block, str):
             block = TelemetryBlock[block.upper()]
 
+        if isinstance(block, TelemetryBlock):
+            block_id = block.value
+            block_name = block.name
+        else:
+            block_id = block
+            block_name = f"0x{block:02X}"
+
         # Build APP-TM payload: block ID (1 byte)
-        payload = bytes([block.value])
+        payload = bytes([block_id])
         request = nsp.make_request(nsp.NspCommand.APP_TM, payload)
 
         reply = self._transact(request)
-        logger.info(f"APP-TM block={block.name}")
+        logger.info(f"APP-TM block={block_name}")
 
-        # Decode telemetry
-        return decode_telemetry_block(block, reply.payload)
+        # Decode telemetry if STANDARD block
+        if block_id == 0x00 or (isinstance(block, TelemetryBlock) and block == TelemetryBlock.STANDARD):
+            return decode_telemetry_block(TelemetryBlock.STANDARD, reply.payload)
+        else:
+            # Return raw payload for other blocks
+            return reply.payload
 
-    def app_command(
-        self, mode: Optional[str] = None, setpoint_rpm: Optional[float] = None
-    ) -> None:
+    def app_command(self, mode: str | None = None, setpoint_rpm: float | None = None) -> None:
         """
         Send application command (APP-CMD).
 
@@ -312,7 +347,7 @@ class Session:
             payload.append(0xFF)  # No change
 
         if setpoint_rpm is not None:
-            from nss_host.icd_fields import encode_field, FieldType
+            from nss_host.icd_fields import FieldType, encode_field
 
             payload.extend(encode_field(setpoint_rpm, FieldType.Q15_16))
 
@@ -337,8 +372,8 @@ class Session:
 
     def config_protection(
         self,
-        overspeed_limit_rpm: Optional[float] = None,
-        overcurrent_limit_a: Optional[float] = None,
+        overspeed_limit_rpm: float | None = None,
+        overcurrent_limit_a: float | None = None,
     ) -> None:
         """
         Configure protection thresholds (CONFIG-PROT command).
@@ -350,7 +385,7 @@ class Session:
         Raises:
             nsp.NspError: On communication error.
         """
-        from nss_host.icd_fields import encode_field, FieldType
+        from nss_host.icd_fields import FieldType, encode_field
 
         payload = bytearray()
 

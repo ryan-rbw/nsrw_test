@@ -4,8 +4,8 @@ Command palette for TUI.
 Implements HOST_SPEC_RPi.md section 7.2: Command Palette.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, List, Optional
 
 
 @dataclass
@@ -21,13 +21,13 @@ class Command:
     """
 
     name: str
-    aliases: List[str]
+    aliases: list[str]
     description: str
     handler: Callable
 
 
 # Command palette registry
-COMMANDS: List[Command] = [
+COMMANDS: list[Command] = [
     Command("help", ["?"], "Show help", lambda: None),
     Command("quit", ["q", "exit"], "Exit TUI", lambda: None),
     Command("connect", [], "Connect to device", lambda: None),
@@ -45,7 +45,7 @@ COMMANDS: List[Command] = [
 ]
 
 
-def find_command(name: str) -> Optional[Command]:
+def find_command(name: str) -> Command | None:
     """
     Find command by name or alias.
 

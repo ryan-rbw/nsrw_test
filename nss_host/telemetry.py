@@ -7,9 +7,8 @@ Decodes STANDARD, TEMP, VOLT, CURR, and DIAG telemetry blocks.
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
-from nss_host.icd_fields import decode_field, FieldType
+from nss_host.icd_fields import FieldType, decode_field
 
 
 class TelemetryBlock(Enum):
@@ -203,9 +202,7 @@ class DiagTelemetry:
 
 def decode_telemetry_block(
     block_id: TelemetryBlock, data: bytes
-) -> Optional[
-    StandardTelemetry | TempTelemetry | VoltTelemetry | CurrTelemetry | DiagTelemetry
-]:
+) -> StandardTelemetry | TempTelemetry | VoltTelemetry | CurrTelemetry | DiagTelemetry | None:
     """
     Decode telemetry block by ID.
 

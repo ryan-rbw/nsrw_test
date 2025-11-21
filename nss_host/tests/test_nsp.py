@@ -14,32 +14,34 @@ class TestNspFrame:
 
     def test_frame_creation(self):
         """Test creating NSP frame."""
-        frame = nsp.NspFrame(control=0x80, payload=b"\x01\x02\x03")
+        frame = nsp.NspFrame(dest_addr=0x07, src_addr=0x11, control=0x80, payload=b"\x01\x02\x03")
 
+        assert frame.dest_addr == 0x07
+        assert frame.src_addr == 0x11
         assert frame.control == 0x80
         assert frame.payload == b"\x01\x02\x03"
 
     def test_frame_is_request(self):
         """Test POLL bit detection."""
-        request = nsp.NspFrame(control=0x80, payload=b"")
-        reply = nsp.NspFrame(control=0x00, payload=b"")
+        request = nsp.NspFrame(dest_addr=0x07, src_addr=0x11, control=0x80, payload=b"")
+        reply = nsp.NspFrame(dest_addr=0x11, src_addr=0x07, control=0x00, payload=b"")
 
         assert request.is_request is True
         assert reply.is_request is False
 
     def test_frame_is_ack(self):
         """Test ACK bit detection."""
-        ack = nsp.NspFrame(control=0x20, payload=b"")
-        nack = nsp.NspFrame(control=0x00, payload=b"")
+        ack = nsp.NspFrame(dest_addr=0x11, src_addr=0x07, control=0x20, payload=b"")
+        nack = nsp.NspFrame(dest_addr=0x11, src_addr=0x07, control=0x00, payload=b"")
 
         assert ack.is_ack is True
         assert nack.is_ack is False
 
     def test_frame_is_nack(self):
         """Test NACK detection."""
-        ack_reply = nsp.NspFrame(control=0x20, payload=b"")
-        nack_reply = nsp.NspFrame(control=0x00, payload=b"")
-        request = nsp.NspFrame(control=0x80, payload=b"")
+        ack_reply = nsp.NspFrame(dest_addr=0x11, src_addr=0x07, control=0x20, payload=b"")
+        nack_reply = nsp.NspFrame(dest_addr=0x11, src_addr=0x07, control=0x00, payload=b"")
+        request = nsp.NspFrame(dest_addr=0x07, src_addr=0x11, control=0x80, payload=b"")
 
         assert ack_reply.is_nack is False
         assert nack_reply.is_nack is True
@@ -47,63 +49,89 @@ class TestNspFrame:
 
     def test_frame_command(self):
         """Test command code extraction."""
-        frame = nsp.NspFrame(control=0x85, payload=b"")  # POLL=1, cmd=5
+        frame = nsp.NspFrame(
+            dest_addr=0x07, src_addr=0x11, control=0x85, payload=b""
+        )  # POLL=1, cmd=5
 
         assert frame.command == 0x05
 
     def test_frame_to_bytes(self):
-        """Test frame serialization."""
-        frame = nsp.NspFrame(control=0x80, payload=b"\x01\x02\x03")
+        """Test frame serialization per ICD format."""
+        frame = nsp.NspFrame(dest_addr=0x07, src_addr=0x11, control=0x80, payload=b"\x01\x02\x03")
         data = frame.to_bytes()
 
-        assert data == b"\x80\x01\x02\x03"
+        assert data == b"\x07\x11\x80\x01\x02\x03"
 
     def test_frame_from_bytes(self):
-        """Test frame parsing."""
-        data = b"\x80\x01\x02\x03"
+        """Test frame parsing per ICD format."""
+        data = b"\x07\x11\x80\x01\x02\x03"
         frame = nsp.NspFrame.from_bytes(data)
 
+        assert frame.dest_addr == 0x07
+        assert frame.src_addr == 0x11
         assert frame.control == 0x80
         assert frame.payload == b"\x01\x02\x03"
 
     def test_frame_from_bytes_empty(self):
         """Test parsing empty data raises error."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="at least dest_addr, src_addr, and control"):
             nsp.NspFrame.from_bytes(b"")
 
-    def test_frame_from_bytes_control_only(self):
-        """Test parsing control byte only."""
-        data = b"\x80"
+    def test_frame_from_bytes_minimal(self):
+        """Test parsing minimal frame (dest, src, control only)."""
+        data = b"\x07\x11\x80"
         frame = nsp.NspFrame.from_bytes(data)
 
+        assert frame.dest_addr == 0x07
+        assert frame.src_addr == 0x11
         assert frame.control == 0x80
         assert frame.payload == b""
+
+    def test_frame_from_bytes_too_short(self):
+        """Test parsing frame with insufficient bytes raises error."""
+        with pytest.raises(ValueError, match="at least dest_addr, src_addr, and control"):
+            nsp.NspFrame.from_bytes(b"\x07\x11")  # Missing control byte
 
 
 class TestNspRequestReply:
     """Test NSP request/reply construction."""
 
     def test_make_request(self):
-        """Test creating request frame."""
+        """Test creating request frame with ICD-compliant addressing."""
         request = nsp.make_request(nsp.NspCommand.PING, b"\x01\x02")
 
+        assert request.dest_addr == 0x07  # Default destination
+        assert request.src_addr == 0x11  # Default source (host)
         assert request.is_request is True
         assert request.command == nsp.NspCommand.PING
         assert request.payload == b"\x01\x02"
 
+    def test_make_request_custom_addresses(self):
+        """Test creating request frame with custom addresses."""
+        request = nsp.make_request(nsp.NspCommand.PING, b"", dest_addr=0x03, src_addr=0x05)
+
+        assert request.dest_addr == 0x03
+        assert request.src_addr == 0x05
+        assert request.is_request is True
+        assert request.command == nsp.NspCommand.PING
+
     def test_make_reply_ack(self):
-        """Test creating ACK reply."""
+        """Test creating ACK reply with ICD-compliant addressing."""
         reply = nsp.make_reply(nsp.NspCommand.PING, b"\x03\x04", ack=True)
 
+        assert reply.dest_addr == 0x11  # Default destination (host)
+        assert reply.src_addr == 0x07  # Default source (device)
         assert reply.is_request is False
         assert reply.is_ack is True
         assert reply.command == nsp.NspCommand.PING
         assert reply.payload == b"\x03\x04"
 
     def test_make_reply_nack(self):
-        """Test creating NACK reply."""
+        """Test creating NACK reply with ICD-compliant addressing."""
         reply = nsp.make_reply(nsp.NspCommand.PING, b"\x05\x06", ack=False)
 
+        assert reply.dest_addr == 0x11  # Default destination (host)
+        assert reply.src_addr == 0x07  # Default source (device)
         assert reply.is_request is False
         assert reply.is_ack is False
         assert reply.is_nack is True

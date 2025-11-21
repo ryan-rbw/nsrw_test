@@ -9,7 +9,6 @@ Commands: PING (0x00), PEEK (0x02), POKE (0x03), APP-TM (0x07),
 
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Optional, Union
 
 
 class NspCommand(IntEnum):
@@ -35,16 +34,24 @@ CMD_MASK = 0x1F  # Bits 4-0: Command code
 @dataclass
 class NspFrame:
     """
-    NSP frame structure.
+    NSP frame structure per NRWA-T6 emulator implementation.
 
     Attributes:
+        dest_addr: Destination address (0-127, set by ADDR0-ADDR2 pins)
+        src_addr: Source address (0-127, host typically uses 0x11)
         control: Control byte [POLL|B|A|cmd4..0]
         payload: Frame payload (command/telemetry data)
         is_request: True if POLL bit is set
         is_ack: True if ACK bit is set
         command: Command code (0-31)
+
+    Note:
+        The emulator expects format: [Dest | Src | Ctrl | Len | Data... | CRC]
+        where Len is the length of the Data field (not in ICD but required by emulator).
     """
 
+    dest_addr: int
+    src_addr: int
     control: int
     payload: bytes
 
@@ -69,60 +76,77 @@ class NspFrame:
         return self.control & CMD_MASK
 
     def to_bytes(self) -> bytes:
-        """Convert frame to bytes (control + payload)."""
-        return bytes([self.control]) + self.payload
+        """Convert frame to bytes per ICD: [dest_addr][src_addr][control][payload]."""
+        return bytes([self.dest_addr, self.src_addr, self.control]) + self.payload
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "NspFrame":
         """
-        Parse NSP frame from bytes.
+        Parse NSP frame from bytes per ICD format.
 
         Args:
-            data: Raw frame data (control byte + payload).
+            data: Raw frame data [dest_addr][src_addr][control][payload].
 
         Returns:
             Parsed NspFrame.
 
         Raises:
-            ValueError: If data is empty.
+            ValueError: If data is too short.
         """
-        if len(data) == 0:
-            raise ValueError("NSP frame must have at least control byte")
+        if len(data) < 3:
+            raise ValueError("NSP frame must have at least dest_addr, src_addr, and control bytes")
 
-        return cls(control=data[0], payload=data[1:])
+        return cls(
+            dest_addr=data[0], src_addr=data[1], control=data[2], payload=data[3:]
+        )
 
 
-def make_request(command: Union[NspCommand, int], payload: bytes = b"") -> NspFrame:
+def make_request(
+    command: NspCommand | int,
+    payload: bytes = b"",
+    dest_addr: int = 0x07,
+    src_addr: int = 0x11,
+) -> NspFrame:
     """
-    Create NSP request frame.
+    Create NSP request frame per ICD specification.
 
     Args:
         command: Command code.
         payload: Command payload.
+        dest_addr: Destination address (default 0x07 for typical emulator config).
+        src_addr: Source address (default 0x11 for host).
 
     Returns:
-        NSP request frame with POLL=1, A=0.
+        NSP request frame with POLL=1, A=0, proper addressing.
     """
     control = POLL_BIT | (int(command) & CMD_MASK)
-    return NspFrame(control=control, payload=payload)
+    return NspFrame(dest_addr=dest_addr, src_addr=src_addr, control=control, payload=payload)
 
 
-def make_reply(command: Union[NspCommand, int], payload: bytes = b"", ack: bool = True) -> NspFrame:
+def make_reply(
+    command: NspCommand | int,
+    payload: bytes = b"",
+    ack: bool = True,
+    dest_addr: int = 0x11,
+    src_addr: int = 0x07,
+) -> NspFrame:
     """
-    Create NSP reply frame.
+    Create NSP reply frame per ICD specification.
 
     Args:
         command: Command code.
         payload: Reply payload.
         ack: True for ACK, False for NACK.
+        dest_addr: Destination address (typically host address 0x11).
+        src_addr: Source address (typically device address 0x07).
 
     Returns:
-        NSP reply frame with POLL=0, A=ack.
+        NSP reply frame with POLL=0, A=ack, proper addressing.
     """
     control = int(command) & CMD_MASK
     if ack:
         control |= ACK_BIT
-    return NspFrame(control=control, payload=payload)
+    return NspFrame(dest_addr=dest_addr, src_addr=src_addr, control=control, payload=payload)
 
 
 class NspError(Exception):

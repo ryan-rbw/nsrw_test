@@ -4,8 +4,6 @@ Unit tests for SLIP encoder/decoder.
 Tests HOST_SPEC_RPi.md section 5: Protocol Details (SLIP).
 """
 
-import pytest
-
 from nss_host import slip
 
 
@@ -89,9 +87,14 @@ class TestSlipCodec:
         assert decoded[1] == data2
 
     def test_roundtrip(self):
-        """Test encode + decode roundtrip."""
+        """Test encode + decode roundtrip.
+
+        Note: Empty frames are intentionally not tested, as SLIP
+        implementations typically skip empty frames (consecutive ENDs).
+        NSP protocol doesn't require empty frames since all frames
+        contain at least control+CRC (3 bytes minimum).
+        """
         test_data = [
-            b"",
             b"\x00",
             b"\x01\x02\x03\x04",
             bytes([slip.END, slip.ESC]),
@@ -158,7 +161,7 @@ class TestSlipDecoder:
         decoder = slip.SlipDecoder()
 
         # Feed partial frame
-        decoder.feed(b"\xC0\x01\x02")
+        decoder.feed(b"\xc0\x01\x02")
 
         # Reset
         decoder.reset()

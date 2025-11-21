@@ -5,8 +5,6 @@ Implements HOST_SPEC_RPi.md section 5: Protocol Details (SLIP).
 END=0xC0, ESC=0xDB, ESC_END=0xDC, ESC_ESC=0xDD.
 """
 
-from typing import List
-
 # SLIP special characters
 END = 0xC0
 ESC = 0xDB
@@ -38,7 +36,7 @@ def encode(data: bytes) -> bytes:
     return bytes(encoded)
 
 
-def decode(data: bytes) -> List[bytes]:
+def decode(data: bytes) -> list[bytes]:
     """
     Decode SLIP-framed data.
 
@@ -47,8 +45,14 @@ def decode(data: bytes) -> List[bytes]:
 
     Returns:
         List of decoded frames (without SLIP framing).
+
+    Note:
+        Empty frames (consecutive END bytes) are skipped, as they
+        represent redundant delimiters or synchronization bytes.
+        This is standard SLIP behavior and acceptable since NSP
+        frames always contain at least control+CRC (3 bytes minimum).
     """
-    frames: List[bytes] = []
+    frames: list[bytes] = []
     current_frame = bytearray()
     escape_next = False
 
@@ -66,7 +70,7 @@ def decode(data: bytes) -> List[bytes]:
         elif byte == ESC:
             escape_next = True
         elif byte == END:
-            # End of frame
+            # End of frame - skip empty frames (redundant delimiters)
             if len(current_frame) > 0:
                 frames.append(bytes(current_frame))
                 current_frame = bytearray()
@@ -92,7 +96,7 @@ class SlipDecoder:
         self.current_frame = bytearray()
         self.escape_next = False
 
-    def feed(self, data: bytes) -> List[bytes]:
+    def feed(self, data: bytes) -> list[bytes]:
         """
         Feed data to decoder and return complete frames.
 
@@ -101,8 +105,11 @@ class SlipDecoder:
 
         Returns:
             List of complete frames (if any).
+
+        Note:
+            Empty frames are skipped (see decode() for rationale).
         """
-        frames: List[bytes] = []
+        frames: list[bytes] = []
 
         for byte in data:
             if self.escape_next:
@@ -118,6 +125,7 @@ class SlipDecoder:
             elif byte == ESC:
                 self.escape_next = True
             elif byte == END:
+                # Skip empty frames (redundant delimiters)
                 if len(self.current_frame) > 0:
                     frames.append(bytes(self.current_frame))
                     self.current_frame = bytearray()

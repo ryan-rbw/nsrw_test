@@ -7,7 +7,6 @@ Loads/saves TOML configuration for serial parameters, GPIO pins, logging, and de
 
 import os
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -19,15 +18,15 @@ class SerialConfig(BaseModel):
     baud: int = Field(default=460800, description="Baud rate (455.6-465.7 kbps tolerated)")
     timeout_ms: int = Field(default=10, description="Reply timeout in milliseconds")
     retries: int = Field(default=2, description="Retry count on CRC/SLIP errors")
-    port_select_gpio: Optional[int] = Field(
+    port_select_gpio: int | None = Field(
         default=24, description="GPIO for port A/B selection (0=A, 1=B)"
     )
-    de_gpio: Optional[int] = Field(default=18, description="RS-485 Driver Enable GPIO (BCM)")
-    nre_gpio: Optional[int] = Field(
+    de_gpio: int | None = Field(default=18, description="RS-485 Driver Enable GPIO (BCM)")
+    nre_gpio: int | None = Field(
         default=23, description="RS-485 Receiver Enable GPIO (BCM, active-low)"
     )
-    fault_in_gpio: Optional[int] = Field(default=25, description="FAULT input GPIO")
-    reset_out_gpio: Optional[int] = Field(default=12, description="RESET output GPIO")
+    fault_in_gpio: int | None = Field(default=25, description="FAULT input GPIO")
+    reset_out_gpio: int | None = Field(default=12, description="RESET output GPIO")
 
 
 class LoggingConfig(BaseModel):
@@ -61,7 +60,7 @@ def get_config_path() -> Path:
     return Path(config_home) / "nss_host" / "config.toml"
 
 
-def load_config(path: Optional[Path] = None) -> Config:
+def load_config(path: Path | None = None) -> Config:
     """
     Load configuration from TOML file.
 
@@ -86,7 +85,7 @@ def load_config(path: Optional[Path] = None) -> Config:
     return Config(**data)
 
 
-def save_config(config: Config, path: Optional[Path] = None) -> None:
+def save_config(config: Config, path: Path | None = None) -> None:
     """
     Save configuration to TOML file.
 

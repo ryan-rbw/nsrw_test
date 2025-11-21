@@ -8,7 +8,6 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional
 
 
 class ScenarioState(Enum):
@@ -37,7 +36,7 @@ class Scenario:
     name: str
     version: str
     description: str
-    steps: List[dict]
+    steps: list[dict]
 
 
 class ScenarioRunner:
@@ -55,10 +54,10 @@ class ScenarioRunner:
             session: Active NSS Host session.
         """
         self.session = session
-        self.current_scenario: Optional[Scenario] = None
+        self.current_scenario: Scenario | None = None
         self.state = ScenarioState.IDLE
 
-    def list_scenarios(self, directory: Path) -> List[str]:
+    def list_scenarios(self, directory: Path) -> list[str]:
         """
         List available scenarios in directory.
 
@@ -91,7 +90,7 @@ class ScenarioRunner:
             FileNotFoundError: If scenario file not found.
             ValueError: If scenario format invalid.
         """
-        with open(path, "r") as f:
+        with open(path) as f:
             data = json.load(f)
 
         scenario = Scenario(

@@ -4,8 +4,6 @@ Unit tests for CRC-CCITT implementation.
 Tests HOST_SPEC_RPi.md section 5: Protocol Details (CRC).
 """
 
-import pytest
-
 from nss_host import crc_ccitt
 
 

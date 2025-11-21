@@ -7,7 +7,6 @@ Provides UQ (unsigned) and Q (signed) fixed-point format conversions.
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Union
 
 
 class FieldType(Enum):
@@ -172,7 +171,7 @@ def decode_q7_8(raw: int) -> float:
     return raw / (1 << 8)
 
 
-def encode_field(value: Union[int, float], field_type: FieldType) -> bytes:
+def encode_field(value: int | float, field_type: FieldType) -> bytes:
     """
     Encode field value to bytes.
 
@@ -207,7 +206,7 @@ def encode_field(value: Union[int, float], field_type: FieldType) -> bytes:
         raise ValueError(f"Unsupported field type: {field_type}")
 
 
-def decode_field(data: bytes, field_type: FieldType) -> Union[int, float]:
+def decode_field(data: bytes, field_type: FieldType) -> int | float:
     """
     Decode field value from bytes.
 

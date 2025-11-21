@@ -7,7 +7,6 @@ Provides pyserial interface with RS-485 direction control via GPIO.
 
 import logging
 import time
-from typing import Optional
 
 import serial
 
@@ -33,8 +32,8 @@ class SerialLink:
         port: str,
         baud: int = 460800,
         timeout: float = 0.01,
-        de_gpio: Optional[int] = None,
-        nre_gpio: Optional[int] = None,
+        de_gpio: int | None = None,
+        nre_gpio: int | None = None,
     ):
         """
         Initialize serial link.
@@ -56,8 +55,8 @@ class SerialLink:
         )
 
         # Initialize GPIO for RS-485 direction control
-        self.de_pin: Optional[OutputDevice] = None
-        self.nre_pin: Optional[OutputDevice] = None
+        self.de_pin: OutputDevice | None = None
+        self.nre_pin: OutputDevice | None = None
 
         if GPIO_AVAILABLE and de_gpio is not None:
             try:

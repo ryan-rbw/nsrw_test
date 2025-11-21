@@ -6,7 +6,6 @@ Provides interactive terminal interface with dashboard, tables, logs, and comman
 """
 
 import logging
-from typing import Optional
 
 from textual.app import App, ComposeResult
 from textual.containers import Container
@@ -108,7 +107,7 @@ class NssHostApp(App):
 
     def __init__(self) -> None:
         super().__init__()
-        self.session: Optional[object] = None
+        self.session: object | None = None
         self.current_view = "dashboard"
 
     def compose(self) -> ComposeResult:
