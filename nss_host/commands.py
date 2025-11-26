@@ -11,8 +11,12 @@ import time
 from nss_host import crc_ccitt, nsp, slip
 from nss_host.serial_link import SerialLink
 from nss_host.telemetry import (
+    CurrTelemetry,
+    DiagTelemetry,
     StandardTelemetry,
     TelemetryBlock,
+    TempTelemetry,
+    VoltTelemetry,
     decode_telemetry_block,
 )
 
@@ -284,7 +288,9 @@ class Session:
         self._transact(request)
         logger.info(f"POKE addr=0x{addr:04X} count={num_registers} ({len(data)} bytes)")
 
-    def app_telemetry(self, block: str | TelemetryBlock | int) -> StandardTelemetry | bytes:
+    def app_telemetry(
+        self, block: str | TelemetryBlock | int
+    ) -> StandardTelemetry | TempTelemetry | VoltTelemetry | CurrTelemetry | DiagTelemetry:
         """
         Request telemetry block (APP-TM command).
 
@@ -292,68 +298,108 @@ class Session:
             block: Telemetry block name, enum, or ID (0x00-0x04 supported).
 
         Returns:
-            Decoded telemetry object for STANDARD, or raw bytes for others.
+            Decoded telemetry object for the requested block type.
 
         Raises:
             nsp.NspError: On communication error.
+            ValueError: If block ID is unknown.
 
         Note:
             Supported blocks: 0x00=STANDARD, 0x01=TEMPERATURES,
             0x02=VOLTAGES, 0x03=CURRENTS, 0x04=DIAGNOSTICS
         """
-        # Convert block to ID
+        # Convert block to TelemetryBlock enum
         if isinstance(block, str):
             block = TelemetryBlock[block.upper()]
+        elif isinstance(block, int):
+            block = TelemetryBlock(block)
 
-        if isinstance(block, TelemetryBlock):
-            block_id = block.value
-            block_name = block.name
-        else:
-            block_id = block
-            block_name = f"0x{block:02X}"
+        block_id = block.value
+        block_name = block.name
 
         # Build APP-TM payload: block ID (1 byte)
         payload = bytes([block_id])
         request = nsp.make_request(nsp.NspCommand.APP_TM, payload)
 
         reply = self._transact(request)
-        logger.info(f"APP-TM block={block_name}")
+        logger.info(f"APP-TM block={block_name} payload_len={len(reply.payload)}")
 
-        # Decode telemetry if STANDARD block
-        if block_id == 0x00 or (isinstance(block, TelemetryBlock) and block == TelemetryBlock.STANDARD):
-            return decode_telemetry_block(TelemetryBlock.STANDARD, reply.payload)
-        else:
-            # Return raw payload for other blocks
-            return reply.payload
+        # Decode telemetry based on block type
+        decoded = decode_telemetry_block(block, reply.payload)
+        if decoded is None:
+            raise ValueError(f"Unknown telemetry block: {block_name}")
+        return decoded
 
-    def app_command(self, mode: str | None = None, setpoint_rpm: float | None = None) -> None:
+    def app_command(
+        self,
+        mode: str | None = None,
+        setpoint_rpm: float | None = None,
+        setpoint_current_ma: float | None = None,
+        setpoint_torque_mnm: float | None = None,
+        direction: str | None = None,
+    ) -> None:
         """
         Send application command (APP-CMD).
 
         Args:
-            mode: Operating mode ('OFF', 'SPEED', 'CURRENT', 'TORQUE').
+            mode: Operating mode ('CURRENT', 'SPEED', 'TORQUE', 'PWM').
             setpoint_rpm: Speed setpoint in RPM (for SPEED mode).
+            setpoint_current_ma: Current setpoint in mA (for CURRENT mode).
+            setpoint_torque_mnm: Torque setpoint in mN·m (for TORQUE mode).
+            direction: Direction ('POSITIVE' or 'NEGATIVE').
 
         Raises:
             nsp.NspError: On communication error.
+
+        Note:
+            Per REGS.md, APP-CMD uses subcommands with big-endian encoding:
+            - Subcmd 0x00: SET-MODE [subcmd, mode]
+            - Subcmd 0x01: SET-SPEED [subcmd, speed_b3-b0] (UQ14.18 RPM)
+            - Subcmd 0x02: SET-CURRENT [subcmd, current_b3-b0] (UQ18.14 mA)
+            - Subcmd 0x03: SET-TORQUE [subcmd, torque_b3-b0] (UQ18.14 mN·m)
+            - Subcmd 0x05: SET-DIRECTION [subcmd, direction]
         """
-        # Build APP-CMD payload (simplified, needs proper implementation)
+        from nss_host.icd_fields import encode_uq14_18, encode_uq18_14
+
         payload = bytearray()
 
+        # Determine which subcommand to send
         if mode is not None:
-            mode_map = {"OFF": 0, "SPEED": 1, "CURRENT": 2, "TORQUE": 3}
-            payload.append(mode_map.get(mode.upper(), 0))
+            # Subcmd 0x00: SET-MODE
+            mode_map = {"CURRENT": 0, "SPEED": 1, "TORQUE": 2, "PWM": 3}
+            mode_val = mode_map.get(mode.upper(), 0)
+            payload.append(0x00)  # Subcmd
+            payload.append(mode_val)  # Mode
+        elif setpoint_rpm is not None:
+            # Subcmd 0x01: SET-SPEED (UQ14.18 big-endian)
+            speed_raw = encode_uq14_18(setpoint_rpm)
+            payload.append(0x01)  # Subcmd
+            payload.extend(speed_raw.to_bytes(4, "big"))
+        elif setpoint_current_ma is not None:
+            # Subcmd 0x02: SET-CURRENT (UQ18.14 big-endian)
+            current_raw = encode_uq18_14(setpoint_current_ma)
+            payload.append(0x02)  # Subcmd
+            payload.extend(current_raw.to_bytes(4, "big"))
+        elif setpoint_torque_mnm is not None:
+            # Subcmd 0x03: SET-TORQUE (UQ18.14 big-endian)
+            torque_raw = encode_uq18_14(setpoint_torque_mnm)
+            payload.append(0x03)  # Subcmd
+            payload.extend(torque_raw.to_bytes(4, "big"))
+        elif direction is not None:
+            # Subcmd 0x05: SET-DIRECTION
+            dir_map = {"POSITIVE": 0, "NEGATIVE": 1}
+            dir_val = dir_map.get(direction.upper(), 0)
+            payload.append(0x05)  # Subcmd
+            payload.append(dir_val)  # Direction
         else:
-            payload.append(0xFF)  # No change
-
-        if setpoint_rpm is not None:
-            from nss_host.icd_fields import FieldType, encode_field
-
-            payload.extend(encode_field(setpoint_rpm, FieldType.Q15_16))
+            raise ValueError("Must specify mode, setpoint, or direction")
 
         request = nsp.make_request(nsp.NspCommand.APP_CMD, bytes(payload))
         self._transact(request)
-        logger.info(f"APP-CMD mode={mode} setpoint_rpm={setpoint_rpm}")
+        logger.info(
+            f"APP-CMD mode={mode} rpm={setpoint_rpm} current_ma={setpoint_current_ma} "
+            f"torque_mnm={setpoint_torque_mnm} direction={direction}"
+        )
 
     def clear_fault(self, mask: int = 0xFFFFFFFF) -> None:
         """
@@ -364,41 +410,57 @@ class Session:
 
         Raises:
             nsp.NspError: On communication error.
+
+        Note:
+            Per REGS.md line 208, mask is 32-bit big-endian.
         """
-        payload = mask.to_bytes(4, "little")
+        payload = mask.to_bytes(4, "big")
         request = nsp.make_request(nsp.NspCommand.CLEAR_FAULT, payload)
         self._transact(request)
         logger.info(f"CLEAR-FAULT mask=0x{mask:08X}")
 
     def config_protection(
         self,
-        overspeed_limit_rpm: float | None = None,
-        overcurrent_limit_a: float | None = None,
+        param_id: int,
+        value: float,
     ) -> None:
         """
         Configure protection thresholds (CONFIG-PROT command).
 
         Args:
-            overspeed_limit_rpm: Overspeed trip threshold (RPM).
-            overcurrent_limit_a: Overcurrent trip threshold (A).
+            param_id: Parameter ID (see REGS.md lines 220-227).
+                0x00 = Overvoltage threshold (UQ16.16 V)
+                0x01 = Overspeed fault (UQ14.18 RPM)
+                0x02 = Overspeed soft (UQ14.18 RPM)
+                0x03 = Max duty cycle (UQ8.8 %)
+                0x04 = Motor overpower (UQ16.16 W)
+                0x05 = Soft overcurrent (UQ16.16 A)
+            value: Parameter value (encoding depends on param_id).
 
         Raises:
             nsp.NspError: On communication error.
+
+        Note:
+            Per REGS.md lines 214-230, format is:
+            [Param_ID, Value_3, Value_2, Value_1, Value_0]
+            Value is big-endian, type depends on param_id.
         """
-        from nss_host.icd_fields import FieldType, encode_field
+        from nss_host.icd_fields import encode_uq14_18, encode_uq16_16
 
         payload = bytearray()
+        payload.append(param_id)
 
-        if overspeed_limit_rpm is not None:
-            payload.extend(encode_field(overspeed_limit_rpm, FieldType.UQ16_16))
-        if overcurrent_limit_a is not None:
-            payload.extend(encode_field(overcurrent_limit_a, FieldType.UQ16_16))
+        # Encode value based on param_id
+        if param_id in [0x01, 0x02]:  # Overspeed (UQ14.18 RPM)
+            value_raw = encode_uq14_18(value)
+        else:  # All others use UQ16.16
+            value_raw = encode_uq16_16(value)
+
+        payload.extend(value_raw.to_bytes(4, "big"))
 
         request = nsp.make_request(nsp.NspCommand.CONFIG_PROT, bytes(payload))
         self._transact(request)
-        logger.info(
-            f"CONFIG-PROT overspeed={overspeed_limit_rpm} overcurrent={overcurrent_limit_a}"
-        )
+        logger.info(f"CONFIG-PROT param_id=0x{param_id:02X} value={value}")
 
     def __enter__(self) -> "Session":
         """Context manager entry."""

@@ -23,6 +23,8 @@ class FieldType(Enum):
     Q15_16 = "q15_16"  # Signed 15.16 fixed-point
     UQ8_8 = "uq8_8"  # Unsigned 8.8 fixed-point
     Q7_8 = "q7_8"  # Signed 7.8 fixed-point
+    UQ14_18 = "uq14_18"  # Unsigned 14.18 fixed-point (for RPM)
+    UQ18_14 = "uq18_14"  # Unsigned 18.14 fixed-point (for torque/current/power)
 
 
 @dataclass
@@ -171,6 +173,60 @@ def decode_q7_8(raw: int) -> float:
     return raw / (1 << 8)
 
 
+def encode_uq14_18(value: float) -> int:
+    """
+    Encode float to UQ14.18 unsigned fixed-point.
+
+    Args:
+        value: Floating-point value (0.0 to 16383.999996).
+
+    Returns:
+        32-bit unsigned integer representation.
+    """
+    value = max(0.0, min(16383.999996, value))  # Clamp
+    return int(value * (1 << 18)) & 0xFFFFFFFF
+
+
+def decode_uq14_18(raw: int) -> float:
+    """
+    Decode UQ14.18 unsigned fixed-point to float.
+
+    Args:
+        raw: 32-bit unsigned integer.
+
+    Returns:
+        Floating-point value.
+    """
+    return (raw & 0xFFFFFFFF) / (1 << 18)
+
+
+def encode_uq18_14(value: float) -> int:
+    """
+    Encode float to UQ18.14 unsigned fixed-point.
+
+    Args:
+        value: Floating-point value (0.0 to 262143.99994).
+
+    Returns:
+        32-bit unsigned integer representation.
+    """
+    value = max(0.0, min(262143.99994, value))  # Clamp
+    return int(value * (1 << 14)) & 0xFFFFFFFF
+
+
+def decode_uq18_14(raw: int) -> float:
+    """
+    Decode UQ18.14 unsigned fixed-point to float.
+
+    Args:
+        raw: 32-bit unsigned integer.
+
+    Returns:
+        Floating-point value.
+    """
+    return (raw & 0xFFFFFFFF) / (1 << 14)
+
+
 def encode_field(value: int | float, field_type: FieldType) -> bytes:
     """
     Encode field value to bytes.
@@ -206,40 +262,47 @@ def encode_field(value: int | float, field_type: FieldType) -> bytes:
         raise ValueError(f"Unsupported field type: {field_type}")
 
 
-def decode_field(data: bytes, field_type: FieldType) -> int | float:
+def decode_field(data: bytes, field_type: FieldType, byte_order: str = "big") -> int | float:
     """
     Decode field value from bytes.
 
     Args:
-        data: Encoded bytes (little-endian).
+        data: Encoded bytes.
         field_type: Field data type.
+        byte_order: "big" (network/big-endian) or "little" (default: "big" for emulator).
 
     Returns:
         Decoded value.
     """
     if field_type == FieldType.UINT8:
-        return int.from_bytes(data[:1], "little", signed=False)
+        return int.from_bytes(data[:1], byte_order, signed=False)
     elif field_type == FieldType.UINT16:
-        return int.from_bytes(data[:2], "little", signed=False)
+        return int.from_bytes(data[:2], byte_order, signed=False)
     elif field_type == FieldType.UINT32:
-        return int.from_bytes(data[:4], "little", signed=False)
+        return int.from_bytes(data[:4], byte_order, signed=False)
     elif field_type == FieldType.INT8:
-        return int.from_bytes(data[:1], "little", signed=True)
+        return int.from_bytes(data[:1], byte_order, signed=True)
     elif field_type == FieldType.INT16:
-        return int.from_bytes(data[:2], "little", signed=True)
+        return int.from_bytes(data[:2], byte_order, signed=True)
     elif field_type == FieldType.INT32:
-        return int.from_bytes(data[:4], "little", signed=True)
+        return int.from_bytes(data[:4], byte_order, signed=True)
     elif field_type == FieldType.UQ16_16:
-        raw = int.from_bytes(data[:4], "little", signed=False)
+        raw = int.from_bytes(data[:4], byte_order, signed=False)
         return decode_uq16_16(raw)
     elif field_type == FieldType.Q15_16:
-        raw = int.from_bytes(data[:4], "little", signed=False)
+        raw = int.from_bytes(data[:4], byte_order, signed=False)
         return decode_q15_16(raw)
     elif field_type == FieldType.UQ8_8:
-        raw = int.from_bytes(data[:2], "little", signed=False)
+        raw = int.from_bytes(data[:2], byte_order, signed=False)
         return decode_uq8_8(raw)
     elif field_type == FieldType.Q7_8:
-        raw = int.from_bytes(data[:2], "little", signed=False)
+        raw = int.from_bytes(data[:2], byte_order, signed=False)
         return decode_q7_8(raw)
+    elif field_type == FieldType.UQ14_18:
+        raw = int.from_bytes(data[:4], byte_order, signed=False)
+        return decode_uq14_18(raw)
+    elif field_type == FieldType.UQ18_14:
+        raw = int.from_bytes(data[:4], byte_order, signed=False)
+        return decode_uq18_14(raw)
     else:
         raise ValueError(f"Unsupported field type: {field_type}")
