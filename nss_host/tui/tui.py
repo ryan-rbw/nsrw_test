@@ -14,6 +14,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Footer, Header, Input, Static
 
 from nss_host.commands import Session
+from nss_host.nsp import ControlMode
 from nss_host.telemetry import TelemetryBlock
 from nss_host.tui.widgets_new import (
     BarGauge,
@@ -138,6 +139,7 @@ class NssHostApp(App):
         ("d", "disconnect", "Disconnect"),
         ("p", "ping", "Ping"),
         ("t", "telemetry", "Telemetry"),
+        ("s", "scenarios", "Scenarios"),
         ("space", "refresh", "Refresh"),
     ]
 
@@ -215,14 +217,30 @@ class NssHostApp(App):
             self.action_ping()
         elif command == "telemetry":
             self.action_telemetry()
+        elif command == "scenarios" or command == "s":
+            self.action_scenarios()
+        elif command.startswith("run "):
+            try:
+                arg = command.split()[1]
+                if arg == "all":
+                    self.run_all_scenarios()
+                else:
+                    scenario_num = int(arg)
+                    self.run_scenario(scenario_num)
+            except (ValueError, IndexError):
+                self.notify("Usage: run <number> or run all", severity="error")
         elif command.startswith("speed "):
             try:
                 rpm = float(command.split()[1])
                 self.command_speed(rpm)
             except (ValueError, IndexError):
                 self.notify("Invalid speed command. Usage: speed <rpm>", severity="error")
+        elif command.startswith("idle"):
+            self.command_idle()
+        elif command == "help":
+            self.show_help()
         else:
-            self.notify(f"Unknown command: {command}", severity="warning")
+            self.notify(f"Unknown command: {command}. Type 'help' for commands.", severity="warning")
 
     def action_connect(self) -> None:
         """Connect to device."""
@@ -310,6 +328,104 @@ class NssHostApp(App):
         if self.connected:
             self.update_telemetry()
 
+    def action_scenarios(self) -> None:
+        """Show scenarios menu and run selected scenario."""
+        if not self.connected or not self.session:
+            self.notify("Connect first before running scenarios", severity="error")
+            return
+
+        # Show available scenarios
+        from nss_host.scenarios.icd_compliance import list_scenarios
+
+        scenarios = list_scenarios()
+        scenario_list = "\n".join([f"  {i+1}. {s['name']}" for i, s in enumerate(scenarios)])
+        self.notify(
+            f"Available scenarios:\n{scenario_list}\n\nType 'run <number>' to execute",
+            severity="information",
+            timeout=10,
+        )
+
+    def run_scenario(self, scenario_num: int) -> None:
+        """Run a specific scenario by number."""
+        if not self.connected or not self.session:
+            self.notify("Not connected", severity="error")
+            return
+
+        from nss_host.scenarios.icd_compliance import ALL_SCENARIOS, ScenarioResult
+
+        if scenario_num < 1 or scenario_num > len(ALL_SCENARIOS):
+            self.notify(f"Invalid scenario number. Use 1-{len(ALL_SCENARIOS)}", severity="error")
+            return
+
+        scenario_class = ALL_SCENARIOS[scenario_num - 1]
+        self.notify(f"Running: {scenario_class.name}...", severity="information")
+
+        try:
+            scenario = scenario_class(self.session)
+            report = scenario.run()
+
+            # Show results
+            if report.result == ScenarioResult.PASSED:
+                self.notify(
+                    f"✓ {report.name}: PASSED ({report.passed_count}/{len(report.steps)} steps)",
+                    severity="information",
+                    timeout=10,
+                )
+            else:
+                self.notify(
+                    f"✗ {report.name}: {report.result.value.upper()} "
+                    f"({report.passed_count}/{len(report.steps)} steps passed)",
+                    severity="error",
+                    timeout=10,
+                )
+
+            # Log detailed results
+            for step in report.steps:
+                status = "PASS" if step.passed else "FAIL"
+                logger.info(f"  [{status}] {step.name}: {step.message}")
+
+        except Exception as e:
+            self.notify(f"Scenario failed: {e}", severity="error")
+            logger.error(f"Scenario error: {e}", exc_info=True)
+
+    def run_all_scenarios(self) -> None:
+        """Run all ICD compliance scenarios."""
+        if not self.connected or not self.session:
+            self.notify("Not connected", severity="error")
+            return
+
+        from nss_host.scenarios.icd_compliance import run_all_scenarios, ScenarioResult
+
+        self.notify("Running all 6 ICD scenarios...", severity="information")
+
+        try:
+            reports = run_all_scenarios(self.session)
+
+            passed = sum(1 for r in reports if r.result == ScenarioResult.PASSED)
+            failed = len(reports) - passed
+
+            if failed == 0:
+                self.notify(
+                    f"✓ All {passed} scenarios PASSED!",
+                    severity="information",
+                    timeout=15,
+                )
+            else:
+                self.notify(
+                    f"Results: {passed} passed, {failed} failed",
+                    severity="warning",
+                    timeout=15,
+                )
+
+            # Log summary
+            for report in reports:
+                status = "PASS" if report.result == ScenarioResult.PASSED else "FAIL"
+                logger.info(f"[{status}] {report.name}: {report.passed_count}/{len(report.steps)} steps")
+
+        except Exception as e:
+            self.notify(f"Scenarios failed: {e}", severity="error")
+            logger.error(f"Scenarios error: {e}", exc_info=True)
+
     def command_speed(self, rpm: float) -> None:
         """Command wheel to specific speed."""
         if not self.connected or not self.session:
@@ -317,12 +433,40 @@ class NssHostApp(App):
             return
 
         try:
-            # First set mode to SPEED, then set the speed setpoint
-            self.session.app_command(mode='SPEED')
-            self.session.app_command(setpoint_rpm=rpm)
+            # Use new unified API: mode + setpoint in one call
+            self.session.app_command(ControlMode.SPEED, rpm)
             self.notify(f"Commanded {rpm:.0f} RPM", severity="information")
         except Exception as e:
             self.notify(f"Command failed: {e}", severity="error")
+
+    def command_idle(self) -> None:
+        """Set wheel to idle mode."""
+        if not self.connected or not self.session:
+            self.notify("Not connected", severity="error")
+            return
+
+        try:
+            self.session.app_command(ControlMode.IDLE)
+            self.notify("Wheel set to IDLE", severity="information")
+        except Exception as e:
+            self.notify(f"Command failed: {e}", severity="error")
+
+    def show_help(self) -> None:
+        """Show available commands."""
+        help_text = """Commands:
+  connect     - Connect to emulator
+  disconnect  - Disconnect
+  ping        - Send PING
+  telemetry   - Request telemetry
+  speed <rpm> - Set speed mode
+  idle        - Set idle mode
+  scenarios   - List test scenarios
+  run <n>     - Run scenario n
+  run all     - Run all scenarios
+  help        - Show this help
+
+Shortcuts: c=connect, d=disconnect, p=ping, t=telemetry, s=scenarios, q=quit"""
+        self.notify(help_text, severity="information", timeout=15)
 
     def update_telemetry(self) -> None:
         """Update telemetry displays."""
@@ -333,27 +477,38 @@ class NssHostApp(App):
             # Get STANDARD telemetry (0x00) for primary dynamics
             logger.debug("update_telemetry: Requesting STANDARD telemetry...")
             tm = self.session.app_telemetry(TelemetryBlock.STANDARD)
-            logger.debug(f"update_telemetry: Received - mode={tm.mode}, speed={tm.speed_rpm:.2f} RPM, current={tm.current_a:.3f} A")
+            logger.debug(f"update_telemetry: Received - control_mode={tm.control_mode}, speed={tm.speed_rpm:.2f} RPM, current={tm.current_ma:.3f} mA")
 
-            # Extract mode and compute mode string ONCE
-            # Per REGS.md line 257: 0=CURRENT, 1=SPEED, 2=TORQUE, 3=PWM
-            mode_map = {0: "CURRENT", 1: "SPEED", 2: "TORQUE", 3: "PWM"}
-            mode_str = mode_map.get(tm.mode, "UNKNOWN")
+            # Extract mode and compute mode string
+            # Per ICD: IDLE=0x00, CURRENT=0x01, SPEED=0x02, TORQUE=0x04, PWM=0x08
+            mode_map = {
+                ControlMode.IDLE: "IDLE",
+                ControlMode.CURRENT: "CURRENT",
+                ControlMode.SPEED: "SPEED",
+                ControlMode.TORQUE: "TORQUE",
+                ControlMode.PWM: "PWM",
+            }
+            mode_str = mode_map.get(tm.control_mode, f"0x{tm.control_mode:02X}")
 
             # Get VOLT telemetry (0x02) for accurate bus voltage
             try:
                 volt_tm = self.session.app_telemetry(TelemetryBlock.VOLT)
-                bus_voltage = volt_tm.v_bus
-                logger.debug(f"update_telemetry: VOLT block - v_bus={bus_voltage:.2f} V")
+                # Use 30V rail as bus voltage (closest to drive voltage)
+                bus_voltage = volt_tm.v_30v
+                logger.debug(f"update_telemetry: VOLT block - v_30v={bus_voltage:.2f} V")
             except Exception as e:
                 logger.warning(f"VOLT telemetry failed: {e}, using 0.0")
                 bus_voltage = 0.0
 
             # Get TEMP telemetry (0x01) for temperature readings
+            # Note: Raw ADC values - would need conversion formula from ICD
             try:
                 temp_tm = self.session.app_telemetry(TelemetryBlock.TEMP)
-                motor_temp = temp_tm.temp_motor_c
-                logger.debug(f"update_telemetry: TEMP block - motor={motor_temp:.1f} °C")
+                # Raw ADC value - display as-is for now (conversion requires ICD formula)
+                motor_temp_raw = temp_tm.temp_motor_raw
+                # Placeholder conversion (actual formula depends on thermistor)
+                motor_temp = motor_temp_raw * 0.01  # Rough estimate
+                logger.debug(f"update_telemetry: TEMP block - motor_raw={motor_temp_raw}")
             except Exception as e:
                 logger.warning(f"TEMP telemetry failed: {e}, using 0.0")
                 motor_temp = 0.0
@@ -361,23 +516,37 @@ class NssHostApp(App):
             # Calculate omega (rad/s) from RPM: omega = RPM * 2π / 60
             omega_rad_s = tm.speed_rpm * 2.0 * math.pi / 60.0
 
+            # Convert current from mA to A for display
+            current_a = tm.current_ma / 1000.0
+
+            # Estimate power from voltage and current (P = V * I)
+            power_w = bus_voltage * current_a
+
+            # Estimate torque from current (rough approximation)
+            # Actual torque constant depends on motor, ~0.01 Nm/A typical for small motors
+            torque_nm = current_a * 0.01
+
+            # Estimate momentum (H = I * ω, where I is moment of inertia)
+            # Typical small RW inertia ~0.001 kg·m²
+            momentum_nms = 0.001 * omega_rad_s
+
             # Update ALL widgets atomically
             self.wheel_anim.update_rpm(tm.speed_rpm, mode=mode_str)
             self.speed_gauge.update_rpm(tm.speed_rpm)
-            self.current_gauge.update_value(tm.current_a)
+            self.current_gauge.update_value(current_a)
             self.voltage_gauge.update_value(bus_voltage)
-            self.power_gauge.update_value(abs(tm.power_w))
+            self.power_gauge.update_value(abs(power_w))
             self.temp_gauge.update_value(motor_temp)
 
-            # Update status panel with extended telemetry info
+            # Update status panel with telemetry info
             self.status_panel.update_status(
                 connected=True,
                 mode=mode_str,
-                faults=tm.fault_status,
+                faults=tm.fault,
                 stats=self.session.stats,
-                # Additional dynamics from STANDARD telemetry
-                torque_nm=tm.torque_nm,
-                momentum_nms=tm.momentum,
+                # Computed dynamics
+                torque_nm=torque_nm,
+                momentum_nms=momentum_nms,
                 omega_rad_s=omega_rad_s,
             )
 

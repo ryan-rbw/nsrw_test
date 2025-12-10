@@ -24,6 +24,88 @@ class NspCommand(IntEnum):
     TRIP_LCL = 0x0B
 
 
+class ControlMode(IntEnum):
+    """
+    Reaction wheel control modes per NRWA-T6 ICD and production code.
+
+    Per ns_reaction_wheel.hpp:
+        enum class ControlMode : uint8_t {
+            IDLE = 0x00,     // Motor drive is in Hi-Z
+            CURRENT = 0x01,  // Closed loop Current control
+            SPEED = 0x02,    // Closed loop Speed control
+            TORQUE = 0x04,   // Closed loop Torque control
+            PWM = 0x08,      // Open Loop PWM Control
+        };
+    """
+
+    IDLE = 0x00  # Motor drive in high-impedance state
+    CURRENT = 0x01  # Closed-loop current control (mA)
+    SPEED = 0x02  # Closed-loop speed control (RPM)
+    TORQUE = 0x04  # Closed-loop torque control (mN-m)
+    PWM = 0x08  # Open-loop PWM duty cycle control
+
+
+class MemoryAddress(IntEnum):
+    """
+    Memory addresses for PEEK/POKE commands per NRWA-T6 ICD.
+
+    Per ns_reaction_wheel.hpp:
+        enum class MemoryAddress : uint8_t {
+            SERIAL_NUMBER = 0x00,
+            OVERSPEED_FAULT_THRESHOLD = 0x06,  // UQ24.8 RPM
+            ACTIVE_SPEED_LIMIT = 0x07,         // UQ14.18 RPM
+        };
+    """
+
+    SERIAL_NUMBER = 0x00  # Unit firmware serial number
+    OVERSPEED_FAULT_THRESHOLD = 0x06  # UQ24.8 RPM, default 6000 RPM
+    ACTIVE_SPEED_LIMIT = 0x07  # UQ14.18 RPM, default 5000 RPM
+
+
+class ProtectionBits(IntEnum):
+    """
+    Protection configuration bits for CONFIGURE-PROTECTION command.
+
+    Per NRWA-T6 ICD: 0 = enabled, 1 = disabled.
+    """
+
+    OVERSPEED_FAULT = 0x01  # Bit 0: Overspeed fault protection
+    OVERSPEED_LIMIT = 0x02  # Bit 1: Overspeed limit during closed-loop
+    OVERCURRENT_LIMIT = 0x04  # Bit 2: Motor overcurrent limit
+    EDAC_SCRUB = 0x08  # Bit 3: EDAC scrubbing of protected SRAM
+    BRAKING_OVERVOLTAGE = 0x10  # Bit 4: Braking overvoltage load
+
+
+class FaultBits(IntEnum):
+    """
+    Fault register bits per NRWA-T6 ICD Section 12.5.2.1.2.
+    """
+
+    MOTOR_DRIVE_FAULT = 0x01  # Bit 0: Motor drive fault
+    MOTOR_DRIVE_OTW = 0x02  # Bit 1: Motor drive over-temperature warning
+    HALL_INVALID_STATE = 0x04  # Bit 2: Hall sensor invalid state
+    HALL_INVALID_TRANS = 0x08  # Bit 3: Hall sensor invalid transition
+    OVERVOLTAGE = 0x10  # Bit 4: Overvoltage fault (>36V)
+    OVERSPEED_FAULT = 0x20  # Bit 5: Overspeed fault
+    OVERSPEED_LIMITED = 0x40  # Bit 6: Overspeed limited
+    OVERPOWER_LIMITED = 0x80  # Bit 7: Overpower limited
+    CURRENT_LIMITED = 0x100  # Bit 8: Current limited
+
+
+class StatusBits(IntEnum):
+    """
+    Status register bits per NRWA-T6 ICD.
+    """
+
+    RAM_BOOT_COMPLETE = 0x01  # Bit 0: RAM boot state complete
+    OVERSPEED_LIMITED = 0x10  # Bit 4: Overspeed limit active
+    OVERSPEED_FAULT_DISABLED = 0x20000  # Bit 17: Overspeed fault protection disabled
+    OVERSPEED_LIMIT_DISABLED = 0x40000  # Bit 18: Overspeed limit protection disabled
+    OVERCURRENT_DISABLED = 0x80000  # Bit 19: Overcurrent limit protection disabled
+    EDAC_SCRUB_DISABLED = 0x100000  # Bit 20: EDAC scrub disabled
+    BRAKING_LOAD_DISABLED = 0x200000  # Bit 21: Braking overvoltage load disabled
+
+
 # Control byte bit masks
 POLL_BIT = 0x80  # Bit 7: POLL (1=request, 0=reply)
 B_BIT = 0x40  # Bit 6: B (unused by host)

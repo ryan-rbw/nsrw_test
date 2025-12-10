@@ -213,80 +213,74 @@ class Session:
         # Should not reach here
         raise nsp.NspTimeoutError(request.command)
 
-    def ping(self) -> None:
+    def ping(self) -> bytes:
         """
         Send PING command.
+
+        Returns:
+            5-byte response: [device_type, serial, version_major, version_minor, version_patch]
 
         Raises:
             nsp.NspError: On communication error.
         """
         request = nsp.make_request(nsp.NspCommand.PING)
-        self._transact(request)
-        logger.info("PING successful")
+        reply = self._transact(request)
+        logger.info(f"PING successful, response={reply.payload.hex()}")
+        return reply.payload
 
-    def peek(self, addr: int, length: int) -> bytes:
+    def peek(self, addr: int) -> int:
         """
-        Read memory/registers (PEEK command).
+        Read memory/register (PEEK command).
+
+        Per production code (ns_reaction_wheel.hpp):
+            struct PeekCommand { MemoryAddress addr; };  // 1 byte
+            struct PeekResponse { Packed<uint32_t> val; };  // 4 bytes LE
 
         Args:
-            addr: Start address (16-bit, must be 4-byte aligned).
-            length: Number of bytes to read (8-bit count).
+            addr: Memory address (8-bit).
 
         Returns:
-            Read data.
+            32-bit value read (uint32).
 
         Raises:
             nsp.NspError: On communication error.
-
-        Note:
-            Format per emulator: [Addr_H, Addr_L, Count]
-            - Address is 16-bit big-endian
-            - Count is 8-bit
-            - Address must be 4-byte aligned
-            - Count must be > 0
-            - Address must be <= 0x0500
         """
-        # Build PEEK payload: addr (2 bytes big-endian) + count (1 byte)
-        payload = addr.to_bytes(2, "big") + bytes([length])
+        # Build PEEK payload: addr (1 byte)
+        payload = bytes([addr & 0xFF])
         request = nsp.make_request(nsp.NspCommand.PEEK, payload)
 
         reply = self._transact(request)
-        logger.info(f"PEEK addr=0x{addr:04X} len={length}")
 
-        return reply.payload
+        if len(reply.payload) < 4:
+            raise nsp.NspError(f"PEEK response too short: {len(reply.payload)} bytes")
 
-    def poke(self, addr: int, data: bytes) -> None:
+        value = int.from_bytes(reply.payload[:4], "little", signed=False)
+        logger.info(f"PEEK addr=0x{addr:02X} -> 0x{value:08X}")
+        return value
+
+    def poke(self, addr: int, value: int) -> None:
         """
-        Write memory/registers (POKE command).
+        Write memory/register (POKE command).
+
+        Per production code (ns_reaction_wheel.hpp):
+            struct PokeCommand {
+                MemoryAddress addr;    // 1 byte
+                Packed<uint32_t> val;  // 4 bytes LE
+            };
 
         Args:
-            addr: Start address (16-bit, must be 4-byte aligned).
-            data: Data to write (must be multiple of 4 bytes).
+            addr: Memory address (8-bit).
+            value: 32-bit value to write.
 
         Raises:
             nsp.NspError: On communication error.
-            ValueError: If data length is not a multiple of 4 bytes.
-
-        Note:
-            Format per emulator: [Addr_H, Addr_L, Count, Data...]
-            - Address is 16-bit big-endian
-            - Count is number of 4-byte registers (not number of bytes)
-            - Data must be a multiple of 4 bytes
-            - Cannot write to read-only regions (0x0000-0x00FF, 0x0300-0x03FF)
         """
-        # Validate data length is multiple of 4 bytes (register size)
-        if len(data) % 4 != 0:
-            raise ValueError(f"Data length must be multiple of 4 bytes, got {len(data)}")
-
-        # Count = number of registers (4-byte units)
-        num_registers = len(data) // 4
-
-        # Build POKE payload: addr (2 bytes big-endian) + count (1 byte) + data
-        payload = addr.to_bytes(2, "big") + bytes([num_registers]) + data
+        # Build POKE payload: addr (1 byte) + value (4 bytes LE)
+        payload = bytes([addr & 0xFF]) + (value & 0xFFFFFFFF).to_bytes(4, "little")
         request = nsp.make_request(nsp.NspCommand.POKE, payload)
 
         self._transact(request)
-        logger.info(f"POKE addr=0x{addr:04X} count={num_registers} ({len(data)} bytes)")
+        logger.info(f"POKE addr=0x{addr:02X} value=0x{value:08X}")
 
     def app_telemetry(
         self, block: str | TelemetryBlock | int
@@ -332,135 +326,125 @@ class Session:
 
     def app_command(
         self,
-        mode: str | None = None,
-        setpoint_rpm: float | None = None,
-        setpoint_current_ma: float | None = None,
-        setpoint_torque_mnm: float | None = None,
-        direction: str | None = None,
+        mode: "nsp.ControlMode | int",
+        setpoint: float = 0.0,
     ) -> None:
         """
         Send application command (APP-CMD).
 
+        Per production code (ns_reaction_wheel.hpp):
+            struct AppCommand {
+                uint8_t control_mode;      // 1 byte
+                Packed<int32_t> setpoint;  // 4 bytes LE
+            };
+
+        The setpoint encoding depends on mode:
+            - CURRENT: Q14.18 (mA)
+            - SPEED: Q14.18 (RPM)
+            - TORQUE: Q10.22 (mN-m)
+            - PWM: signed 9-bit integer (duty cycle)
+            - IDLE: 0 (ignored)
+
         Args:
-            mode: Operating mode ('CURRENT', 'SPEED', 'TORQUE', 'PWM').
-            setpoint_rpm: Speed setpoint in RPM (for SPEED mode).
-            setpoint_current_ma: Current setpoint in mA (for CURRENT mode).
-            setpoint_torque_mnm: Torque setpoint in mN·m (for TORQUE mode).
-            direction: Direction ('POSITIVE' or 'NEGATIVE').
+            mode: Control mode (ControlMode enum or int).
+            setpoint: Setpoint in engineering units (mA, RPM, mN-m, or duty cycle).
 
         Raises:
             nsp.NspError: On communication error.
 
-        Note:
-            Per REGS.md, APP-CMD uses subcommands with big-endian encoding:
-            - Subcmd 0x00: SET-MODE [subcmd, mode]
-            - Subcmd 0x01: SET-SPEED [subcmd, speed_b3-b0] (UQ14.18 RPM)
-            - Subcmd 0x02: SET-CURRENT [subcmd, current_b3-b0] (UQ18.14 mA)
-            - Subcmd 0x03: SET-TORQUE [subcmd, torque_b3-b0] (UQ18.14 mN·m)
-            - Subcmd 0x05: SET-DIRECTION [subcmd, direction]
+        Example:
+            # Set to 1000 RPM
+            session.app_command(ControlMode.SPEED, 1000.0)
+
+            # Set to 50 mN-m torque
+            session.app_command(ControlMode.TORQUE, 50.0)
+
+            # Set to idle
+            session.app_command(ControlMode.IDLE)
         """
-        from nss_host.icd_fields import encode_uq14_18, encode_uq18_14
+        from nss_host.icd_fields import encode_q10_22, encode_q14_18
 
-        payload = bytearray()
+        # Get mode value
+        mode_val = int(mode) if not isinstance(mode, int) else mode
 
-        # Determine which subcommand to send
-        if mode is not None:
-            # Subcmd 0x00: SET-MODE
-            mode_map = {"CURRENT": 0, "SPEED": 1, "TORQUE": 2, "PWM": 3}
-            mode_val = mode_map.get(mode.upper(), 0)
-            payload.append(0x00)  # Subcmd
-            payload.append(mode_val)  # Mode
-        elif setpoint_rpm is not None:
-            # Subcmd 0x01: SET-SPEED (UQ14.18 big-endian)
-            speed_raw = encode_uq14_18(setpoint_rpm)
-            payload.append(0x01)  # Subcmd
-            payload.extend(speed_raw.to_bytes(4, "big"))
-        elif setpoint_current_ma is not None:
-            # Subcmd 0x02: SET-CURRENT (UQ18.14 big-endian)
-            current_raw = encode_uq18_14(setpoint_current_ma)
-            payload.append(0x02)  # Subcmd
-            payload.extend(current_raw.to_bytes(4, "big"))
-        elif setpoint_torque_mnm is not None:
-            # Subcmd 0x03: SET-TORQUE (UQ18.14 big-endian)
-            torque_raw = encode_uq18_14(setpoint_torque_mnm)
-            payload.append(0x03)  # Subcmd
-            payload.extend(torque_raw.to_bytes(4, "big"))
-        elif direction is not None:
-            # Subcmd 0x05: SET-DIRECTION
-            dir_map = {"POSITIVE": 0, "NEGATIVE": 1}
-            dir_val = dir_map.get(direction.upper(), 0)
-            payload.append(0x05)  # Subcmd
-            payload.append(dir_val)  # Direction
-        else:
-            raise ValueError("Must specify mode, setpoint, or direction")
+        # Encode setpoint based on mode
+        if mode_val == nsp.ControlMode.CURRENT or mode_val == nsp.ControlMode.SPEED:
+            # Q14.18 for mA or RPM
+            setpoint_raw = encode_q14_18(setpoint)
+        elif mode_val == nsp.ControlMode.TORQUE:
+            # Q10.22 for mN-m
+            setpoint_raw = encode_q10_22(setpoint)
+        elif mode_val == nsp.ControlMode.PWM:
+            # Signed 9-bit integer duty cycle
+            raw = int(setpoint)
+            if raw < 0:
+                raw = (1 << 32) + raw  # Two's complement
+            setpoint_raw = raw & 0xFFFFFFFF
+        else:  # IDLE or unknown
+            setpoint_raw = 0
 
-        request = nsp.make_request(nsp.NspCommand.APP_CMD, bytes(payload))
+        # Build 5-byte payload: [mode, setpoint_le]
+        payload = bytes([mode_val]) + setpoint_raw.to_bytes(4, "little")
+
+        request = nsp.make_request(nsp.NspCommand.APP_CMD, payload)
         self._transact(request)
-        logger.info(
-            f"APP-CMD mode={mode} rpm={setpoint_rpm} current_ma={setpoint_current_ma} "
-            f"torque_mnm={setpoint_torque_mnm} direction={direction}"
-        )
+
+        mode_name = nsp.ControlMode(mode_val).name if mode_val in [m.value for m in nsp.ControlMode] else f"0x{mode_val:02X}"
+        logger.info(f"APP-CMD mode={mode_name} setpoint={setpoint}")
 
     def clear_fault(self, mask: int = 0xFFFFFFFF) -> None:
         """
         Clear fault bits (CLEAR-FAULT command).
 
+        Per production code (ns_reaction_wheel.hpp):
+            struct ClearFaultCommand {
+                Packed<Fault::Type> bits_to_clear;  // 4 bytes LE
+            };
+
         Args:
-            mask: Fault bits to clear (default: all).
+            mask: Fault bits to clear (default: all 0xFFFFFFFF).
 
         Raises:
             nsp.NspError: On communication error.
-
-        Note:
-            Per REGS.md line 208, mask is 32-bit big-endian.
         """
-        payload = mask.to_bytes(4, "big")
+        payload = mask.to_bytes(4, "little")
         request = nsp.make_request(nsp.NspCommand.CLEAR_FAULT, payload)
         self._transact(request)
         logger.info(f"CLEAR-FAULT mask=0x{mask:08X}")
 
-    def config_protection(
-        self,
-        param_id: int,
-        value: float,
-    ) -> None:
+    def config_protection(self, protection_bits: int) -> None:
         """
-        Configure protection thresholds (CONFIG-PROT command).
+        Configure protection mechanisms (CONFIG-PROT command).
+
+        Per production code (ns_reaction_wheel.hpp):
+            struct ConfigureProtectionCommand {
+                Packed<Protection::Type> protection;  // 4 bytes LE
+            };
+
+        Protection bits (0 = enabled, 1 = disabled):
+            Bit 0: Overspeed fault protection
+            Bit 1: Overspeed limit during closed-loop
+            Bit 2: Motor overcurrent limit
+            Bit 3: EDAC scrubbing
+            Bit 4: Braking overvoltage load
 
         Args:
-            param_id: Parameter ID (see REGS.md lines 220-227).
-                0x00 = Overvoltage threshold (UQ16.16 V)
-                0x01 = Overspeed fault (UQ14.18 RPM)
-                0x02 = Overspeed soft (UQ14.18 RPM)
-                0x03 = Max duty cycle (UQ8.8 %)
-                0x04 = Motor overpower (UQ16.16 W)
-                0x05 = Soft overcurrent (UQ16.16 A)
-            value: Parameter value (encoding depends on param_id).
+            protection_bits: Protection bitmask.
 
         Raises:
             nsp.NspError: On communication error.
 
-        Note:
-            Per REGS.md lines 214-230, format is:
-            [Param_ID, Value_3, Value_2, Value_1, Value_0]
-            Value is big-endian, type depends on param_id.
+        Example:
+            # Disable overspeed fault protection (bit 0)
+            session.config_protection(ProtectionBits.OVERSPEED_FAULT)
+
+            # Enable all protections
+            session.config_protection(0x00000000)
         """
-        from nss_host.icd_fields import encode_uq14_18, encode_uq16_16
-
-        payload = bytearray()
-        payload.append(param_id)
-
-        # Encode value based on param_id
-        if param_id in [0x01, 0x02]:  # Overspeed (UQ14.18 RPM)
-            value_raw = encode_uq14_18(value)
-        else:  # All others use UQ16.16
-            value_raw = encode_uq16_16(value)
-
-        payload.extend(value_raw.to_bytes(4, "big"))
-
-        request = nsp.make_request(nsp.NspCommand.CONFIG_PROT, bytes(payload))
+        payload = protection_bits.to_bytes(4, "little")
+        request = nsp.make_request(nsp.NspCommand.CONFIG_PROT, payload)
         self._transact(request)
-        logger.info(f"CONFIG-PROT param_id=0x{param_id:02X} value={value}")
+        logger.info(f"CONFIG-PROT bits=0x{protection_bits:08X}")
 
     def __enter__(self) -> "Session":
         """Context manager entry."""
