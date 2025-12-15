@@ -10,8 +10,10 @@ import math
 from datetime import datetime
 
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Footer, Header, Input, Static
+from textual.binding import Binding
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
+from textual.widgets import Button, Footer, Header, Input, Label, ListItem, ListView, Static
 
 from nss_host.commands import Session
 from nss_host.nsp import ControlMode
@@ -55,6 +57,246 @@ class SessionWithPacketCapture(Session):
             self.packet_callback("RX", reply.to_bytes(), datetime.now())
 
         return reply
+
+
+class ScenarioSelectScreen(ModalScreen[int | None]):
+    """Modal screen for selecting a test scenario."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("enter", "select", "Select", priority=True),
+        Binding("a", "run_all", "Run All", priority=True),
+    ]
+
+    DEFAULT_CSS = """
+    ScenarioSelectScreen {
+        align: center middle;
+    }
+
+    #scenario-dialog {
+        width: 70;
+        height: auto;
+        max-height: 80%;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #scenario-title {
+        text-align: center;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #scenario-list {
+        height: auto;
+        max-height: 20;
+        margin: 1 0;
+        border: solid $primary;
+    }
+
+    #scenario-help {
+        text-align: center;
+        margin-top: 1;
+        color: $text-muted;
+    }
+
+    .scenario-item {
+        padding: 0 1;
+    }
+
+    .scenario-item:hover {
+        background: $accent;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.scenarios = []
+
+    def compose(self) -> ComposeResult:
+        from nss_host.scenarios.icd_compliance import list_scenarios
+
+        self.scenarios = list_scenarios()
+
+        with Vertical(id="scenario-dialog"):
+            yield Label("Select Test Scenario", id="scenario-title")
+            yield ListView(
+                *[
+                    ListItem(
+                        Label(f"{i+1}. {s['name']}", classes="scenario-item"),
+                        id=f"scenario-{i}",
+                    )
+                    for i, s in enumerate(self.scenarios)
+                ],
+                id="scenario-list",
+            )
+            yield Label("[Enter] Run  [A] Run All  [Esc] Cancel", id="scenario-help")
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Handle scenario selection."""
+        if event.item and event.item.id:
+            idx = int(event.item.id.split("-")[1])
+            self.dismiss(idx + 1)  # 1-indexed for user
+
+    def on_key(self, event) -> None:
+        """Handle key events - ensure Escape closes the modal."""
+        if event.key == "escape":
+            event.prevent_default()
+            event.stop()
+            self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        """Cancel and close."""
+        self.dismiss(None)
+
+    def action_select(self) -> None:
+        """Select highlighted item."""
+        list_view = self.query_one("#scenario-list", ListView)
+        if list_view.highlighted_child:
+            idx = int(list_view.highlighted_child.id.split("-")[1])
+            self.dismiss(idx + 1)
+
+    def action_run_all(self) -> None:
+        """Run all scenarios."""
+        self.dismiss(-1)  # Special value for "run all"
+
+
+class CommandPaletteScreen(ModalScreen[str | None]):
+    """Modal screen for command palette."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("enter", "select", "Select", priority=True),
+    ]
+
+    DEFAULT_CSS = """
+    CommandPaletteScreen {
+        align: center middle;
+    }
+
+    #palette-dialog {
+        width: 60;
+        height: auto;
+        max-height: 70%;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #palette-title {
+        text-align: center;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #palette-input {
+        margin-bottom: 1;
+    }
+
+    #palette-list {
+        height: auto;
+        max-height: 15;
+        border: solid $primary;
+    }
+
+    .cmd-item {
+        padding: 0 1;
+    }
+
+    #palette-help {
+        text-align: center;
+        margin-top: 1;
+        color: $text-muted;
+    }
+    """
+
+    COMMANDS = [
+        ("connect", "Connect to device", "c"),
+        ("disconnect", "Disconnect from device", "d"),
+        ("ping", "Send PING command", "p"),
+        ("telemetry", "Request telemetry", "t"),
+        ("scenarios", "Open scenario selector", "s"),
+        ("run all", "Run all test scenarios", ""),
+        ("idle", "Set wheel to IDLE mode", ""),
+        ("speed 100", "Set speed to 100 RPM", ""),
+        ("speed 500", "Set speed to 500 RPM", ""),
+        ("speed 1000", "Set speed to 1000 RPM", ""),
+        ("help", "Show help", "?"),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.filtered_commands = list(self.COMMANDS)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="palette-dialog"):
+            yield Label("Command Palette", id="palette-title")
+            yield Input(placeholder="Type to filter...", id="palette-input")
+            yield ListView(
+                *[
+                    ListItem(
+                        Label(f"{cmd[0]:<15} {cmd[1]:<30} [{cmd[2]}]" if cmd[2] else f"{cmd[0]:<15} {cmd[1]}", classes="cmd-item"),
+                        id=f"cmd-{i}",
+                    )
+                    for i, cmd in enumerate(self.COMMANDS)
+                ],
+                id="palette-list",
+            )
+            yield Label("[Enter] Select  [Esc] Close", id="palette-help")
+
+    def on_mount(self) -> None:
+        """Focus input on mount."""
+        self.query_one("#palette-input", Input).focus()
+
+    def on_key(self, event) -> None:
+        """Handle key events - ensure Escape closes the palette."""
+        if event.key == "escape":
+            event.prevent_default()
+            event.stop()
+            self.dismiss(None)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Filter commands as user types."""
+        query = event.value.lower()
+        list_view = self.query_one("#palette-list", ListView)
+
+        # Update visibility based on filter
+        for i, cmd in enumerate(self.COMMANDS):
+            item = self.query_one(f"#cmd-{i}", ListItem)
+            matches = query in cmd[0].lower() or query in cmd[1].lower()
+            item.display = matches
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Select first visible command or use input as command."""
+        query = event.value.strip()
+        if query:
+            # First check if any command matches
+            for cmd in self.COMMANDS:
+                if query.lower() in cmd[0].lower():
+                    self.dismiss(cmd[0])
+                    return
+            # Otherwise use input as-is
+            self.dismiss(query)
+        else:
+            self.action_select()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Handle command selection."""
+        if event.item and event.item.id:
+            idx = int(event.item.id.split("-")[1])
+            self.dismiss(self.COMMANDS[idx][0])
+
+    def action_cancel(self) -> None:
+        """Cancel and close."""
+        self.dismiss(None)
+
+    def action_select(self) -> None:
+        """Select highlighted item."""
+        list_view = self.query_one("#palette-list", ListView)
+        if list_view.highlighted_child and list_view.highlighted_child.id:
+            idx = int(list_view.highlighted_child.id.split("-")[1])
+            self.dismiss(self.COMMANDS[idx][0])
 
 
 class NssHostApp(App):
@@ -134,13 +376,17 @@ class NssHostApp(App):
     """
 
     BINDINGS = [
-        ("q", "quit", "Quit"),
-        ("c", "connect", "Connect"),
-        ("d", "disconnect", "Disconnect"),
-        ("p", "ping", "Ping"),
-        ("t", "telemetry", "Telemetry"),
-        ("s", "scenarios", "Scenarios"),
-        ("space", "refresh", "Refresh"),
+        Binding("q", "quit", "Quit", priority=True),
+        Binding("c", "connect", "Connect", priority=True),
+        Binding("d", "disconnect", "Disconnect", priority=True),
+        Binding("p", "ping", "Ping", priority=True),
+        Binding("t", "telemetry", "Telemetry", priority=True),
+        Binding("s", "scenarios", "Scenarios", priority=True),
+        Binding("space", "refresh", "Refresh", priority=True),
+        Binding("ctrl+p", "command_palette", "Commands", priority=True),
+        Binding("question_mark", "show_help", "Help", priority=True),
+        Binding("slash", "focus_input", "Input", priority=True),
+        Binding("escape", "unfocus_input", "Unfocus", show=False, priority=True),
     ]
 
     def __init__(self) -> None:
@@ -191,7 +437,7 @@ class NssHostApp(App):
             self.packet_monitor = PacketMonitor(max_packets=10)
             yield self.packet_monitor
 
-        self.command_input = Input(placeholder="Enter command (ping, telemetry, connect, disconnect)...", id="command_input")
+        self.command_input = Input(placeholder="Press / to type, Ctrl+P for commands, or use shortcuts: c d p t s q", id="command_input")
         yield self.command_input
 
         yield Footer()
@@ -199,48 +445,17 @@ class NssHostApp(App):
     def on_mount(self) -> None:
         """Called when app starts."""
         self.title = "NSS Host - NRWA-T6 Reaction Wheel Controller"
-        self.sub_title = "Raspberry Pi 5 | Press 'c' to connect"
+        self.sub_title = "Raspberry Pi 5 | Keys: c=connect d=disconnect p=ping t=telemetry s=scenarios q=quit"
 
         # Set up periodic telemetry updates
         self.set_interval(0.2, self.update_telemetry)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle command input."""
-        command = event.value.strip().lower()
+        command = event.value.strip()
         self.command_input.value = ""
-
-        if command == "connect":
-            self.action_connect()
-        elif command == "disconnect":
-            self.action_disconnect()
-        elif command == "ping":
-            self.action_ping()
-        elif command == "telemetry":
-            self.action_telemetry()
-        elif command == "scenarios" or command == "s":
-            self.action_scenarios()
-        elif command.startswith("run "):
-            try:
-                arg = command.split()[1]
-                if arg == "all":
-                    self.run_all_scenarios()
-                else:
-                    scenario_num = int(arg)
-                    self.run_scenario(scenario_num)
-            except (ValueError, IndexError):
-                self.notify("Usage: run <number> or run all", severity="error")
-        elif command.startswith("speed "):
-            try:
-                rpm = float(command.split()[1])
-                self.command_speed(rpm)
-            except (ValueError, IndexError):
-                self.notify("Invalid speed command. Usage: speed <rpm>", severity="error")
-        elif command.startswith("idle"):
-            self.command_idle()
-        elif command == "help":
-            self.show_help()
-        else:
-            self.notify(f"Unknown command: {command}. Type 'help' for commands.", severity="warning")
+        if command:
+            self._execute_command(command)
 
     def action_connect(self) -> None:
         """Connect to device."""
@@ -329,21 +544,79 @@ class NssHostApp(App):
             self.update_telemetry()
 
     def action_scenarios(self) -> None:
-        """Show scenarios menu and run selected scenario."""
+        """Show scenarios modal for selection."""
         if not self.connected or not self.session:
             self.notify("Connect first before running scenarios", severity="error")
             return
 
-        # Show available scenarios
-        from nss_host.scenarios.icd_compliance import list_scenarios
+        def handle_scenario_result(result: int | None) -> None:
+            """Handle scenario selection result."""
+            if result is None:
+                return  # Cancelled
+            elif result == -1:
+                self.run_all_scenarios()
+            else:
+                self.run_scenario(result)
 
-        scenarios = list_scenarios()
-        scenario_list = "\n".join([f"  {i+1}. {s['name']}" for i, s in enumerate(scenarios)])
-        self.notify(
-            f"Available scenarios:\n{scenario_list}\n\nType 'run <number>' to execute",
-            severity="information",
-            timeout=10,
-        )
+        self.push_screen(ScenarioSelectScreen(), handle_scenario_result)
+
+    def action_command_palette(self) -> None:
+        """Open command palette."""
+        def handle_command(result: str | None) -> None:
+            """Handle command selection."""
+            if result:
+                self._execute_command(result)
+
+        self.push_screen(CommandPaletteScreen(), handle_command)
+
+    def action_focus_input(self) -> None:
+        """Focus the command input."""
+        self.command_input.focus()
+
+    def action_unfocus_input(self) -> None:
+        """Unfocus the command input."""
+        self.set_focus(None)
+
+    def action_show_help(self) -> None:
+        """Show help (bound to ?)."""
+        self.show_help()
+
+    def _execute_command(self, command: str) -> None:
+        """Execute a command string."""
+        command = command.strip().lower()
+
+        if command == "connect":
+            self.action_connect()
+        elif command == "disconnect":
+            self.action_disconnect()
+        elif command == "ping":
+            self.action_ping()
+        elif command == "telemetry":
+            self.action_telemetry()
+        elif command == "scenarios" or command == "s":
+            self.action_scenarios()
+        elif command.startswith("run "):
+            try:
+                arg = command.split()[1]
+                if arg == "all":
+                    self.run_all_scenarios()
+                else:
+                    scenario_num = int(arg)
+                    self.run_scenario(scenario_num)
+            except (ValueError, IndexError):
+                self.notify("Usage: run <number> or run all", severity="error")
+        elif command.startswith("speed "):
+            try:
+                rpm = float(command.split()[1])
+                self.command_speed(rpm)
+            except (ValueError, IndexError):
+                self.notify("Invalid speed command. Usage: speed <rpm>", severity="error")
+        elif command.startswith("idle"):
+            self.command_idle()
+        elif command == "help":
+            self.show_help()
+        else:
+            self.notify(f"Unknown command: {command}. Type 'help' for commands.", severity="warning")
 
     def run_scenario(self, scenario_num: int) -> None:
         """Run a specific scenario by number."""
@@ -453,20 +726,21 @@ class NssHostApp(App):
 
     def show_help(self) -> None:
         """Show available commands."""
-        help_text = """Commands:
-  connect     - Connect to emulator
-  disconnect  - Disconnect
-  ping        - Send PING
-  telemetry   - Request telemetry
-  speed <rpm> - Set speed mode
-  idle        - Set idle mode
-  scenarios   - List test scenarios
-  run <n>     - Run scenario n
-  run all     - Run all scenarios
-  help        - Show this help
+        help_text = """Keyboard Shortcuts:
+  c - Connect to device      d - Disconnect
+  p - Send PING              t - Request telemetry
+  s - Open scenario selector q - Quit
+  / - Focus command input    Esc - Unfocus input
+  Ctrl+P - Command palette   ? - This help
+  Space - Refresh display
 
-Shortcuts: c=connect, d=disconnect, p=ping, t=telemetry, s=scenarios, q=quit"""
-        self.notify(help_text, severity="information", timeout=15)
+Commands (type in input or use Ctrl+P):
+  connect, disconnect, ping, telemetry
+  speed <rpm> - Set speed mode (e.g. speed 1000)
+  idle - Set idle mode
+  run <n> - Run scenario n
+  run all - Run all scenarios"""
+        self.notify(help_text, severity="information", timeout=20)
 
     def update_telemetry(self) -> None:
         """Update telemetry displays."""
