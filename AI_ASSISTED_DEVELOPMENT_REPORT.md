@@ -1,7 +1,7 @@
 # AI-Assisted Spec-Driven Development Report
 ## NSS Host - Reaction Wheel Test Platform
 
-**Date:** November 2025
+**Date:** December 2025
 **Project:** NSS Host - Raspberry Pi 5 Reaction Wheel Test Platform
 **AI Assistant:** Claude Code (running locally on Raspberry Pi 5)
 **Development Approach:** Spec-Driven Development with AI Coding Assistance
@@ -12,12 +12,15 @@
 
 This report documents an experiment in using AI-assisted coding combined with specification-driven development to create a reaction wheel test platform. The system enables testing and development of host software against a reaction wheel emulator, eliminating the need for expensive flight hardware during development.
 
+**Key Achievement:** The Python test code has been validated as **100% protocol-compliant** with the production C++ spacecraft driver (see [PYTHON_PRODUCTION_PROTOCOL_COMPARISON.md](PYTHON_PRODUCTION_PROTOCOL_COMPARISON.md)).
+
 **What makes this unique:** Claude Code ran locally on the Raspberry Pi 5 target hardware, enabling the AI to directly:
 - Execute code on the target platform
 - Interface with hardware (RS-485, GPIO)
 - Debug real-time communication issues
 - Observe actual telemetry from the emulator
 - Iterate rapidly with immediate hardware feedback
+- Compare and align code with production spacecraft software
 
 ---
 
@@ -92,12 +95,14 @@ nss_host/
 
 | Category | Features |
 |----------|----------|
-| **Protocol** | NSP framing, SLIP encoding, CRC-CCITT, big/little endian handling |
-| **Fixed-Point** | UQ14.18 (RPM), UQ16.16 (voltage), UQ18.14 (torque/current), UQ8.8 (temp) |
-| **Telemetry** | STANDARD, TEMP, VOLT, CURR, DIAG blocks with full decoding |
+| **Protocol** | NSP framing, SLIP encoding, CRC-CCITT, little-endian (ICD-compliant) |
+| **Fixed-Point** | Q14.18, Q10.22, Q24.8, Q20.12, Q14.2, UQ16.16, UQ24.8 (production-matched) |
+| **Telemetry** | STANDARD (25-byte), TEMP, VOLT, CURR, DIAG blocks with full decoding |
 | **Commands** | PING, PEEK, POKE, APP-TM, APP-CMD, CLEAR-FAULT, CONFIG-PROT |
-| **TUI** | Live speed gauge, bar gauges, dynamics panel, packet monitor |
+| **Control Modes** | IDLE (0x00), CURRENT (0x01), SPEED (0x02), TORQUE (0x04), PWM (0x08) |
+| **TUI** | Live telemetry, ICD test scenarios, command interface |
 | **Hardware** | RS-485 half-duplex, GPIO DE/NRE control, 460800 baud |
+| **Testing** | 6 ICD compliance scenarios, unit tests, protocol validation |
 
 ---
 
@@ -187,20 +192,40 @@ Developer: "Now it works correctly"
 
 ### Working Test Platform
 - Raspberry Pi 5 host communicating with Pico W emulator at 460800 baud
-- Real-time telemetry display at 5Hz update rate
+- Real-time telemetry display with TUI interface
 - Full NSP protocol implementation matching ICD specification
+- **100% protocol compliance with production C++ spacecraft code**
 - Production-ready error handling and logging
+
+### Protocol Compliance (Validated)
+
+- All 8 command codes match production
+- All 5 control modes match production
+- APP-CMD 5-byte structure with Q-format encoding matches production
+- All telemetry structures (STANDARD 25-byte, TEMP 8-byte, etc.) match production
+- Little-endian byte order throughout (ICD-compliant)
+
+### ICD Test Scenarios
+
+1. Wheel Discovery - PING command verification
+2. Speed Control - Closed-loop speed mode testing
+3. Torque Control - Torque command mode testing
+4. Fault Handling - Fault injection and clearing
+5. Protection Configuration - Enable/disable protections
+6. Telemetry Polling - All telemetry blocks at various rates
 
 ### Code Quality
 - Type hints throughout (Python 3.11+)
-- Comprehensive docstrings (391 across project)
+- Comprehensive docstrings
 - Unit tests for protocol components
+- Protocol compliance tests
 - Consistent code style and patterns
 
 ### Documentation
-- Protocol reference (REGS.md) - 484 lines
-- Inline API documentation
-- Architecture comments
+
+- [HOST_SPEC_RPi.md](HOST_SPEC_RPi.md) - Complete host specification
+- [WIRING_SETUP.md](WIRING_SETUP.md) - Hardware pin mapping
+- [PYTHON_PRODUCTION_PROTOCOL_COMPARISON.md](PYTHON_PRODUCTION_PROTOCOL_COMPARISON.md) - Protocol compliance report
 
 ---
 

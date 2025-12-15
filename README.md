@@ -100,32 +100,37 @@ path = "~/nss_bundles/nrwa_t6_defaults_v1.toml"
 ## Python API
 
 ```python
-from nss_host.session import Session
+from nss_host.commands import Session
+from nss_host.nsp import ControlMode, ProtectionBits
 
 # Open session
 with Session.open('/dev/ttyAMA0', baud=460800, rs485={'de':18, 'nre':23}) as s:
     # Ping device
     s.ping()
 
-    # Read registers
-    regs = s.peek(addr=0x1000, length=16)
+    # Read memory/register (1-byte address, returns 4-byte value)
+    value = s.peek(addr=0x00)  # Read serial number
 
-    # Write registers
-    s.poke(addr=0x1020, data=b'\x01\x00\x00\x00')
+    # Write memory/register (1-byte address, 4-byte value)
+    s.poke(addr=0x07, value=0x00100000)  # Set speed limit
 
     # Get telemetry
-    tm = s.app_telemetry(block='STANDARD')
+    tm = s.app_telemetry('STANDARD')
     print(f"Speed: {tm.speed_rpm} RPM")
-    print(f"Current: {tm.current_a} A")
+    print(f"Current: {tm.current_ma} mA")
+    print(f"Mode: {tm.control_mode}")
 
-    # Send command
-    s.app_command(mode='SPEED', setpoint_rpm=1500)
+    # Send command (mode + setpoint with proper Q-format encoding)
+    s.app_command(ControlMode.SPEED, 1500.0)   # 1500 RPM
+    s.app_command(ControlMode.TORQUE, 50.0)    # 50 mN-m
+    s.app_command(ControlMode.IDLE)            # Stop
 
     # Clear faults
     s.clear_fault(mask=0xFFFFFFFF)
 
-    # Configure protection
-    s.config_protection(overspeed_limit_rpm=5000)
+    # Configure protection (0=enabled, 1=disabled)
+    s.config_protection(ProtectionBits.OVERSPEED_FAULT)  # Disable overspeed fault
+    s.config_protection(0x00000000)  # Enable all protections
 ```
 
 ## Command-Line Tools
@@ -140,11 +145,8 @@ with Session.open('/dev/ttyAMA0', baud=460800, rs485={'de':18, 'nre':23}) as s:
 ## Documentation
 
 - [HOST_SPEC_RPi.md](HOST_SPEC_RPi.md) - Complete host specification
-- [Wiring Guide](docs/wiring.md) - Hardware setup and harness
-- [NSP Protocol](docs/nsp.md) - Protocol details
-- [ICD Mapping](docs/icd.md) - Command and telemetry reference
-- [TUI Guide](docs/tui.md) - Terminal UI user guide
-- [Testing Guide](docs/testing.md) - Test suite and HIL setup
+- [WIRING_SETUP.md](WIRING_SETUP.md) - Hardware setup and pin mapping
+- [PYTHON_PRODUCTION_PROTOCOL_COMPARISON.md](PYTHON_PRODUCTION_PROTOCOL_COMPARISON.md) - Protocol compliance report
 
 ## Performance Targets
 
@@ -167,15 +169,14 @@ nsrw_test/
 │   ├── serial_link.py      # RS-485 serial interface
 │   ├── slip.py             # SLIP encoder/decoder
 │   ├── crc_ccitt.py        # CRC-CCITT implementation
-│   ├── nsp.py              # NSP protocol handler
-│   ├── icd_fields.py       # Field definitions and codecs
-│   ├── telemetry.py        # Telemetry block decoders
-│   ├── commands.py         # High-level command API
+│   ├── nsp.py              # NSP protocol + enums (ControlMode, ProtectionBits)
+│   ├── icd_fields.py       # Fixed-point codecs (Q14.18, Q10.22, Q24.8, etc.)
+│   ├── telemetry.py        # Telemetry block decoders (25-byte STANDARD, etc.)
+│   ├── commands.py         # High-level Session API
 │   ├── tables.py           # Table definitions
-│   ├── session.py          # Session management
-│   ├── tui/                # Terminal UI
-│   ├── scenarios/          # Scenario orchestration
-│   └── tests/              # Test suite
+│   ├── tui/                # Terminal UI with scenario integration
+│   ├── scenarios/          # ICD compliance test scenarios
+│   └── tests/              # Unit tests + protocol compliance tests
 ├── tools/                  # Command-line tools
 └── scripts/                # Setup scripts
 ```
