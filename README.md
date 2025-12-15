@@ -25,14 +25,15 @@ Python host driver for Raspberry Pi 5 to control and test the NRWA-T6-compatible
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/nsrw_test.git
+git clone https://github.com/ryan-rbw/nsrw_test.git
 cd nsrw_test
+
+# Create and activate virtual environment
+python3 -m venv venv
+source venv/bin/activate
 
 # Install in development mode
 pip install -e ".[dev]"
-
-# Or install from PyPI (when available)
-pip install nss-host
 ```
 
 ### First Connection
@@ -47,19 +48,27 @@ pip install nss-host
    sudo ./scripts/setup_udev.sh
    ```
 
-3. **Connect to emulator**:
+3. **Launch TUI**:
    ```bash
-   # Launch TUI
-   nss-tui
+   # Using launch scripts (activates venv automatically)
+   ./launch_tui.sh        # Main TUI with dashboards
+   ./launch_debug_tui.sh  # Debug TUI for manual command testing
 
-   # Or use Python API
-   python3 -c "
-   from nss_host.session import Session
-   with Session.open('/dev/ttyAMA0', baud=460800) as s:
-       s.ping()
-       print('Connected!')
-   "
+   # Or manually with venv active
+   source venv/bin/activate
+   nss-tui                # Main TUI
+   python -m nss_host.tui.debug_tui  # Debug TUI
    ```
+
+4. **TUI Controls**:
+   - `c` - Connect to device
+   - `d` - Disconnect
+   - `p` - Send PING
+   - `t` - Request telemetry
+   - `s` - Open scenario selector
+   - `q` - Quit
+   - `/` - Focus command input
+   - `Ctrl+P` - Command palette
 
 ### Running Tests
 
@@ -163,6 +172,9 @@ nsrw_test/
 ├── README.md
 ├── LICENSE
 ├── HOST_SPEC_RPi.md
+├── launch_tui.sh           # Quick launcher for main TUI
+├── launch_debug_tui.sh     # Quick launcher for debug TUI
+├── venv/                   # Python virtual environment (created during setup)
 ├── nss_host/
 │   ├── __init__.py
 │   ├── config.py           # Configuration management
@@ -174,7 +186,7 @@ nsrw_test/
 │   ├── telemetry.py        # Telemetry block decoders (25-byte STANDARD, etc.)
 │   ├── commands.py         # High-level Session API
 │   ├── tables.py           # Table definitions
-│   ├── tui/                # Terminal UI with scenario integration
+│   ├── tui/                # Terminal UI (main + debug TUI)
 │   ├── scenarios/          # ICD compliance test scenarios
 │   └── tests/              # Unit tests + protocol compliance tests
 ├── tools/                  # Command-line tools
